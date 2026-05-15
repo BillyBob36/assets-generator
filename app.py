@@ -253,16 +253,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Assets Generator", lifespan=lifespan)
 
-# Session cookie carries the authenticated user's email. https_only is set in prod
-# (we infer from PUBLIC_URL); same_site=lax lets the OAuth callback redirect work.
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=SESSION_SECRET,
-    https_only=PUBLIC_URL.startswith("https://"),
-    same_site="lax",
-    max_age=14 * 24 * 3600,  # 14 days
-)
-
 
 # ---------------- Auth helpers ----------------
 # Paths that never require authentication (the login flow itself + static assets
@@ -400,6 +390,19 @@ def me(request: Request):
         "name": request.session.get("user_name", ""),
         "picture": request.session.get("user_picture", ""),
     }
+
+
+# Add SessionMiddleware AFTER the auth_gate decorator so it ends up at the outer
+# layer of the middleware stack (last registered = first to wrap = first to
+# execute on incoming). Otherwise auth_gate runs before SessionMiddleware has
+# populated request.session and we hit AssertionError.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET,
+    https_only=PUBLIC_URL.startswith("https://"),
+    same_site="lax",
+    max_age=14 * 24 * 3600,  # 14 days
+)
 
 
 # ---------------- Read-only endpoints ----------------

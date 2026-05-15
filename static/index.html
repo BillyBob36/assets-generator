@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Assets Générator</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%A8%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">✨</span>
+    <div class="brand-text">
+      <div class="brand-title">Assets Générator</div>
+      <div class="brand-sub">Icônes 3D · fond transparent</div>
+    </div>
+  </div>
+
+  <nav class="tabs" id="tab-nav">
+    <button class="tab active" data-tab="create">
+      <span class="tab-icon">+</span>
+      <span>Créer</span>
+    </button>
+    <button class="tab" data-tab="gallery">
+      <span class="tab-icon">▦</span>
+      <span>Galerie</span>
+      <span class="tab-badge" id="tab-badge">0</span>
+    </button>
+  </nav>
+
+  <div class="topbar-meta">
+    <span class="meta-pill" id="meta-flight" title="Jobs en cours">
+      <span class="dot-pulse"></span><span id="flight-count">0</span> en cours
+    </span>
+    <span class="meta-pill" id="meta-concurrency">— par.</span>
+  </div>
+</header>
+
+<!-- =========================== CRÉER TAB =========================== -->
+<main class="tab-pane active" data-pane="create">
+  <div class="create-grid">
+
+    <!-- Column: Icons -->
+    <section class="col col-icons">
+      <div class="col-head">
+        <h2 class="col-title"><span class="step-num">1</span> Icône</h2>
+        <span class="col-sub">200 000+ via Iconify</span>
+      </div>
+
+      <div class="search-bar">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input type="text" id="search-input" placeholder="heart, rocket, leaf, camera..." autocomplete="off" autofocus>
+        <span class="search-status" id="search-status"></span>
+      </div>
+
+      <div class="suggestions">
+        <button class="chip" data-q="heart">heart</button>
+        <button class="chip" data-q="rocket">rocket</button>
+        <button class="chip" data-q="leaf">leaf</button>
+        <button class="chip" data-q="star">star</button>
+        <button class="chip" data-q="cloud">cloud</button>
+        <button class="chip" data-q="trophy">trophy</button>
+      </div>
+
+      <div class="icon-grid" id="icon-grid">
+        <div class="empty-state">
+          <div class="empty-emoji">🔎</div>
+          <div class="empty-text">Tape un terme pour rechercher.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Column: Materials -->
+    <section class="col col-materials">
+      <div class="col-head">
+        <h2 class="col-title"><span class="step-num">2</span> Matériau</h2>
+        <span class="col-sub">Previews 3D générés</span>
+      </div>
+      <div class="material-grid" id="material-grid"></div>
+    </section>
+
+  </div>
+
+  <!-- Sticky bottom action bar -->
+  <footer class="action-bar">
+    <div class="action-summary">
+      <div class="sum-block">
+        <div class="sum-thumb" id="sum-icon">
+          <span class="placeholder-text">—</span>
+        </div>
+        <div class="sum-info">
+          <div class="sum-label">Icône</div>
+          <div class="sum-value" id="sum-icon-value">Aucune</div>
+        </div>
+      </div>
+
+      <div class="sum-arrow">→</div>
+
+      <div class="sum-block">
+        <div class="sum-thumb" id="sum-material">
+          <span class="placeholder-text">—</span>
+        </div>
+        <div class="sum-info">
+          <div class="sum-label">Matériau</div>
+          <div class="sum-value" id="sum-material-value">Aucun</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="action-format">
+      <div class="control-mini">
+        <label>Ratio</label>
+        <div class="btn-row" id="ratio-row">
+          <button class="pill active" data-ratio="1:1">1:1</button>
+          <button class="pill" data-ratio="3:2">3:2</button>
+          <button class="pill" data-ratio="2:3">2:3</button>
+        </div>
+      </div>
+      <div class="control-mini">
+        <label>Taille</label>
+        <div class="btn-row" id="size-row">
+          <button class="pill" data-size="256">256</button>
+          <button class="pill active" data-size="512">512</button>
+          <button class="pill" data-size="1024">1024</button>
+          <button class="pill" data-size="2048">2048</button>
+        </div>
+      </div>
+      <div class="control-mini">
+        <label>Qualité</label>
+        <div class="btn-row" id="quality-row">
+          <button class="pill" data-quality="low">Rapide</button>
+          <button class="pill active" data-quality="medium">Standard</button>
+          <button class="pill" data-quality="high">Haute</button>
+        </div>
+      </div>
+      <div class="control-mini control-output">
+        <label>Sortie</label>
+        <div class="output-badge" id="output-size-label">512 × 512 px</div>
+      </div>
+    </div>
+
+    <button id="generate-btn" class="btn-primary" disabled>
+      <span class="btn-label">+ Ajouter</span>
+    </button>
+  </footer>
+</main>
+
+<!-- =========================== GALERIE TAB =========================== -->
+<main class="tab-pane" data-pane="gallery">
+  <div class="gallery-toolbar">
+    <div class="gallery-filters" id="gallery-filters">
+      <button class="filter-chip active" data-filter="all">Tous <span class="filter-count" id="count-all">0</span></button>
+      <button class="filter-chip" data-filter="in_progress">En cours <span class="filter-count" id="count-flight">0</span></button>
+      <button class="filter-chip" data-filter="succeeded">Terminés <span class="filter-count" id="count-done">0</span></button>
+      <button class="filter-chip" data-filter="failed">Échecs <span class="filter-count" id="count-fail">0</span></button>
+    </div>
+    <button class="btn-secondary" id="clear-completed">Nettoyer terminés</button>
+  </div>
+
+  <div class="gallery-grid" id="gallery-grid">
+    <div class="gallery-empty">
+      <div class="empty-emoji">🎨</div>
+      <div class="empty-text">Pas encore de génération.<br>Va dans <b>Créer</b> pour ajouter ta première demande.</div>
+    </div>
+  </div>
+</main>
+
+<!-- =========================== MODAL =========================== -->
+<div class="modal hidden" id="result-modal">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card">
+    <button class="modal-close" id="modal-close" aria-label="Fermer">✕</button>
+    <div class="modal-preview">
+      <img id="modal-img" alt="">
+    </div>
+    <div class="modal-info">
+      <div class="modal-title" id="modal-title"></div>
+      <div class="modal-sub" id="modal-sub"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" id="modal-download">⬇ Télécharger PNG</button>
+      <button class="btn-secondary" id="modal-redo">↻ Régénérer</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast hidden" id="toast"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

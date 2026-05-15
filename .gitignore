@@ -1,0 +1,33 @@
+# Secrets — Azure key lives in Coolify env vars, never in git
+.env
+.env.local
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+
+# Claude / harness
+.claude/
+.serena/
+
+# Test artifacts
+_test_*
+_probe_*
+_shadow_test_*
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

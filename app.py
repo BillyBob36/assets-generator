@@ -22,8 +22,10 @@ import asyncio
 import base64
 import io
 import os
+import secrets
 import sys
 import time
+import urllib.parse
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -32,10 +34,11 @@ from typing import Any
 
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
+from starlette.middleware.sessions import SessionMiddleware
 
 from materials import MATERIALS, build_prompt
 
@@ -49,9 +52,29 @@ AZURE_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2025-04-01-previ
 AZURE_API_KEY = os.environ.get("AZURE_OPENAI_API_KEY", "")
 MAX_CONCURRENCY = int(os.environ.get("MAX_CONCURRENCY", "5"))
 
+# ---- Auth config
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+# Comma-separated allowlist; lowercased on load.
+ALLOWED_EMAILS = {e.strip().lower() for e in os.environ.get("ALLOWED_EMAILS", "").split(",") if e.strip()}
+# Public URL the app is served on — used to build the OAuth redirect URI.
+PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")
+# Signed-cookie secret. In dev we auto-generate; in prod, set explicitly.
+SESSION_SECRET = os.environ.get("SESSION_SECRET", "").strip() or secrets.token_urlsafe(48)
+# Auth is OFF when no client id is set (dev fallback). In prod the env should always set it.
+AUTH_ENABLED = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and ALLOWED_EMAILS)
+
 if not all([AZURE_ENDPOINT, AZURE_DEPLOYMENT, AZURE_API_KEY]):
     print("ERROR: Azure OpenAI config incomplete in .env", file=sys.stderr)
     sys.exit(1)
+
+if AUTH_ENABLED:
+    if not PUBLIC_URL:
+        print("WARN: AUTH_ENABLED but PUBLIC_URL missing — OAuth redirect URI will be relative.",
+              file=sys.stderr)
+    print(f"[auth] Google OAuth enabled, allowlist: {sorted(ALLOWED_EMAILS)}", file=sys.stderr)
+else:
+    print("[auth] DISABLED (no GOOGLE_CLIENT_ID/SECRET/ALLOWED_EMAILS set) — app is open", file=sys.stderr)
 
 ICONIFY_BASE = "https://api.iconify.design"
 
@@ -229,6 +252,154 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Assets Generator", lifespan=lifespan)
+
+# Session cookie carries the authenticated user's email. https_only is set in prod
+# (we infer from PUBLIC_URL); same_site=lax lets the OAuth callback redirect work.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET,
+    https_only=PUBLIC_URL.startswith("https://"),
+    same_site="lax",
+    max_age=14 * 24 * 3600,  # 14 days
+)
+
+
+# ---------------- Auth helpers ----------------
+# Paths that never require authentication (the login flow itself + static assets
+# that need to load on the login page).
+_PUBLIC_PREFIXES = (
+    "/auth/", "/login.html", "/style.css", "/app.js",
+    "/previews/",  # OK to leak — they're sphere swatches
+    "/favicon", "/openapi.json", "/docs", "/redoc",
+)
+_PUBLIC_EXACT = {"/api/me", "/api/config"}
+
+
+def _is_public_path(path: str) -> bool:
+    if path in _PUBLIC_EXACT:
+        return True
+    return any(path.startswith(p) for p in _PUBLIC_PREFIXES)
+
+
+@app.middleware("http")
+async def auth_gate(request: Request, call_next):
+    if not AUTH_ENABLED:
+        return await call_next(request)
+    path = request.url.path
+    if _is_public_path(path):
+        return await call_next(request)
+
+    email = request.session.get("user_email")
+    authorized = bool(email) and email in ALLOWED_EMAILS
+
+    # API: return 401 JSON so the frontend can react.
+    if path.startswith("/api/"):
+        if not authorized:
+            return JSONResponse({"detail": "auth required"}, status_code=401)
+        return await call_next(request)
+
+    # Page navigation: redirect to login screen.
+    if not authorized:
+        return RedirectResponse("/login.html", status_code=302)
+    return await call_next(request)
+
+
+def _redirect_uri() -> str:
+    base = PUBLIC_URL or ""
+    return f"{base}/auth/google/callback"
+
+
+@app.get("/auth/google/login")
+def google_login(request: Request):
+    if not AUTH_ENABLED:
+        raise HTTPException(503, "auth not configured")
+    state = secrets.token_urlsafe(24)
+    request.session["oauth_state"] = state
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": _redirect_uri(),
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "access_type": "online",
+        "prompt": "select_account",
+    }
+    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
+    return RedirectResponse(url, status_code=302)
+
+
+@app.get("/auth/google/callback")
+def google_callback(request: Request, code: str | None = None,
+                     state: str | None = None, error: str | None = None):
+    if not AUTH_ENABLED:
+        raise HTTPException(503, "auth not configured")
+    if error:
+        return RedirectResponse(f"/login.html?error={urllib.parse.quote(error)}", status_code=302)
+    expected = request.session.pop("oauth_state", None)
+    if not code or not state or state != expected:
+        return RedirectResponse("/login.html?error=invalid_state", status_code=302)
+    try:
+        tok = requests.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": _redirect_uri(),
+                "grant_type": "authorization_code",
+            },
+            timeout=15,
+        )
+        tok.raise_for_status()
+        access_token = tok.json().get("access_token")
+        if not access_token:
+            raise RuntimeError("no access_token in token response")
+        info = requests.get(
+            "https://www.googleapis.com/oauth2/v3/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=10,
+        )
+        info.raise_for_status()
+        user = info.json()
+    except (requests.RequestException, RuntimeError, ValueError) as e:
+        print(f"[auth] OAuth exchange failed: {e}", file=sys.stderr)
+        return RedirectResponse("/login.html?error=token_exchange", status_code=302)
+
+    email = (user.get("email") or "").lower()
+    verified = bool(user.get("email_verified"))
+    if not email or not verified:
+        return RedirectResponse("/login.html?error=unverified", status_code=302)
+    if email not in ALLOWED_EMAILS:
+        # Tell the user which account was tried so they can switch.
+        q = urllib.parse.urlencode({"error": "unauthorized", "email": email})
+        return RedirectResponse(f"/login.html?{q}", status_code=302)
+
+    request.session["user_email"] = email
+    request.session["user_name"] = user.get("name", "")
+    request.session["user_picture"] = user.get("picture", "")
+    return RedirectResponse("/", status_code=302)
+
+
+@app.post("/auth/logout")
+def logout(request: Request):
+    request.session.clear()
+    return {"ok": True}
+
+
+@app.get("/api/me")
+def me(request: Request):
+    if not AUTH_ENABLED:
+        return {"authenticated": True, "email": "anonymous", "auth_enabled": False}
+    email = request.session.get("user_email")
+    if not email or email not in ALLOWED_EMAILS:
+        return JSONResponse({"authenticated": False, "auth_enabled": True}, status_code=401)
+    return {
+        "authenticated": True,
+        "auth_enabled": True,
+        "email": email,
+        "name": request.session.get("user_name", ""),
+        "picture": request.session.get("user_picture", ""),
+    }
 
 
 # ---------------- Read-only endpoints ----------------

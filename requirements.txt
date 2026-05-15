@@ -4,3 +4,4 @@ pillow>=10
 python-dotenv>=1
 requests>=2.31
 python-multipart>=0.0.9
+itsdangerous>=2

@@ -31,6 +31,12 @@ const $$ = (sel) => document.querySelectorAll(sel);
 
 // ---------- Init ----------
 window.addEventListener("DOMContentLoaded", async () => {
+  // Gate: if auth is enabled and we aren't authenticated, bounce to login.
+  // We do this first so we never paint the app for a stranger.
+  const me = await fetchMe();
+  if (!me) return;  // redirect happened
+  renderUser(me);
+
   await Promise.all([loadConfig(), loadMaterials(), refreshJobs()]);
   bindTabs();
   bindSearch();
@@ -38,9 +44,62 @@ window.addEventListener("DOMContentLoaded", async () => {
   bindGenerate();
   bindGalleryFilters();
   bindMisc();
+  bindAuth();
   updateOutputLabel();
   ensurePolling();
 });
+
+async function fetchMe() {
+  try {
+    const r = await fetch("/api/me");
+    if (r.status === 401) {
+      location.href = "/login.html";
+      return null;
+    }
+    return await r.json();
+  } catch {
+    // network error — let the app proceed; subsequent calls will fail too
+    return { authenticated: true, auth_enabled: false };
+  }
+}
+
+function renderUser(me) {
+  if (!me?.auth_enabled) return;
+  const chip = document.getElementById("user-chip");
+  if (!chip) return;
+  chip.classList.remove("hidden");
+  const avatar = document.getElementById("user-avatar");
+  const emailEl = document.getElementById("user-email");
+  if (me.picture) avatar.src = me.picture;
+  else avatar.style.display = "none";
+  emailEl.textContent = me.email || "";
+}
+
+function bindAuth() {
+  const btn = document.getElementById("logout-btn");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    try {
+      await fetch("/auth/logout", { method: "POST" });
+    } catch {}
+    location.href = "/login.html";
+  });
+}
+
+// Wrap fetch to auto-redirect to login on 401 (session expired / revoked).
+// This catches all the existing /api/* calls without touching them individually.
+const _origFetch = window.fetch;
+window.fetch = async function (...args) {
+  const resp = await _origFetch.apply(this, args);
+  if (resp.status === 401) {
+    const url = typeof args[0] === "string" ? args[0] : args[0]?.url || "";
+    // Don't loop on /api/me (handled separately) or auth endpoints.
+    if (!url.startsWith("/auth/") && !url.endsWith("/api/me")) {
+      location.href = "/login.html";
+    }
+  }
+  return resp;
+};
 
 // ---------- Config ----------
 async function loadConfig() {

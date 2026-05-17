@@ -565,6 +565,17 @@ function renderGalleryCard(j) {
     card.title = j.error;
   }
 
+  // Debug: show the exact PNG that was sent to Azure (useful when the output looks unrelated)
+  const inputBtn = document.createElement("button");
+  inputBtn.className = "btn-icon";
+  inputBtn.title = "Voir l'input envoyé à GPT";
+  inputBtn.innerHTML = "👁";
+  inputBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    window.open(`/api/jobs/${j.id}/input.png`, "_blank");
+  });
+  actions.appendChild(inputBtn);
+
   const del = document.createElement("button");
   del.className = "btn-icon danger";
   del.title = "Supprimer";

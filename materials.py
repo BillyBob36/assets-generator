@@ -141,7 +141,7 @@ MATERIALS: dict[str, dict] = {
 }
 
 
-def build_prompt(material_id: str) -> str:
+def build_prompt(material_id: str, icon_label: str = "") -> str:
     """Construct the gpt-image-1.5 edit prompt for a given material.
 
     Follows the canonical structure from the prompt guide:
@@ -149,21 +149,43 @@ def build_prompt(material_id: str) -> str:
 
     Critical: the output must have a fully transparent surround with NO shadow of any
     kind (drop, cast, contact, ground). The icon should appear to float in a void.
+
+    icon_label: the Iconify icon name (e.g., "heat-pump", "horse"). Hyphens/underscores
+    are converted to spaces. Used as a semantic anchor so the model doesn't
+    reinterpret an ambiguous silhouette as something visually similar.
     """
     if material_id not in MATERIALS:
         raise ValueError(f"Unknown material id: {material_id}")
     m = MATERIALS[material_id]
+    label = (icon_label or "").replace("-", " ").replace("_", " ").strip()
+    label_hint = f" (the icon broadly represents \"{label}\")" if label else ""
+
+    input_block = (
+        f"INPUT: a black silhouette icon centered on a pure white background{label_hint}.\n"
+        "CRITICAL — STENCIL MODE: Treat the input as a LITERAL STENCIL. Every black region of "
+        "the input must become a 3D-extruded solid in the output. Every white region must become "
+        "fully transparent (alpha 0). Do NOT redraw the icon from your own generic concept of "
+        "what the label means — render the EXACT geometric shapes that are visible in the input, "
+        "pixel for pixel.\n"
+        "PRESERVE ALL COMPONENTS — if the input contains an outer container (square, rectangle, "
+        "rounded-square frame, circle) AND an inner detail (fan, dial, gauge, arrow, spokes, "
+        "vents, segments, text, dots), the output MUST contain BOTH at the same relative scale "
+        "and position. Do NOT keep only the most prominent sub-shape and discard the rest. "
+        "Do NOT simplify or abstract the silhouette. Do NOT \"clean up\" the icon by removing "
+        "frames, casings, backgrounds, or surrounding shapes that are part of the input.\n"
+        "Do NOT replace the subject with anything else, do NOT invent a new subject, do NOT add "
+        "extra objects, bubbles, frames, badges, rims, tires, halos, or scenery that aren't in "
+        "the input.\n"
+    )
+
     return (
-        "Icon asset for a website UI — the output will be composited on any background color, "
-        "so the icon must be perfectly cut out with NO shadow anywhere around it.\n"
-        "INPUT description: the input image is a black icon silhouette centered on a pure white "
-        "background. Use the input strictly as the reference SHAPE — keep the same subject and "
-        "the same silhouette. Do NOT replace the subject with anything else, do NOT invent a new "
-        "subject, do NOT add extra objects, bubbles, frames, badges, or scenery.\n"
-        f"Subject: Re-render that exact icon shape as a 3D object made of {m['material_phrase']}. "
-        f"{m['details']}.\n"
-        "Composition: Preserve the EXACT same shape, proportions, and silhouette as the input. "
-        "The icon is isolated, centered, occupies about 80% of the frame. "
+        "Icon asset for a website UI — output must be a perfectly cut out PNG with NO shadow "
+        "anywhere around it.\n"
+        + input_block +
+        f"MATERIAL: 3D-extrude every black region of the input into a solid made of "
+        f"{m['material_phrase']}. {m['details']}.\n"
+        "Composition: Same shape, same proportions, same silhouette, same internal structure "
+        "as the input. The icon is isolated, centered, occupies about 80% of the frame. "
         "Head-on square framing, no perspective distortion, no tilt.\n"
         "Lighting: Even diffuse studio lighting that reveals the material's surface from multiple sides. "
         "Form-revealing self-shading IS allowed on the icon itself (so the 3D volume reads). "

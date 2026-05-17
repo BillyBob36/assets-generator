@@ -174,7 +174,7 @@ def _do_generation(job: dict) -> bytes:
     img_bytes = job["input_png"]
 
     gen_w, gen_h = GENERATION_SIZES[params["ratio"]]
-    prompt = build_prompt(params["material_id"])
+    prompt = build_prompt(params["material_id"], params.get("icon_label", ""))
 
     url = (
         f"{AZURE_ENDPOINT}/openai/deployments/{AZURE_DEPLOYMENT}"
@@ -565,6 +565,28 @@ def get_job_result(job_id: str):
             "Content-Disposition": f'inline; filename="{j["params"]["icon_label"] or "asset"}-'
                                     f'{j["params"]["material_id"]}.png"',
             # don't cache while job is fresh — the server may delete it
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.get("/api/jobs/{job_id}/input.png")
+def get_job_input(job_id: str):
+    """Debug endpoint: return the exact PNG that was sent to Azure for this job.
+
+    Useful when the output looks unrelated to the chosen icon — lets the user
+    verify whether the rasterised input matched their selection.
+    """
+    j = JOBS.get(job_id)
+    if not j:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if "input_png" not in j:
+        raise HTTPException(status_code=410, detail="Input PNG no longer available")
+    return Response(
+        content=j["input_png"],
+        media_type="image/png",
+        headers={
+            "Content-Disposition": f'inline; filename="input-{j["params"]["icon_label"] or "icon"}.png"',
             "Cache-Control": "no-store",
         },
     )

@@ -67,14 +67,12 @@ body {
 }
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px; height: 34px;
-  font-size: 17px;
-  background: var(--accent-gradient);
-  border-radius: 10px;
-  box-shadow: 0 0 20px var(--accent-glow);
+  width: 38px;
+  height: 38px;
+  object-fit: contain;
+  display: block;
+  /* logo has its own neon glow; we just add a soft halo to make it pop on dark bg */
+  filter: drop-shadow(0 0 10px rgba(168, 85, 247, 0.45));
 }
 .brand-text { line-height: 1.2; }
 .brand-title { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }

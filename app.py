@@ -259,6 +259,7 @@ app = FastAPI(title="Assets Generator", lifespan=lifespan)
 # that need to load on the login page).
 _PUBLIC_PREFIXES = (
     "/auth/", "/login.html", "/style.css", "/app.js",
+    "/logo-rocket.png",  # used as favicon and brand mark on the login page
     "/previews/",  # OK to leak — they're sphere swatches
     "/favicon", "/openapi.json", "/docs", "/redoc",
 )

@@ -1010,16 +1010,12 @@ body {
   text-align: center;
 }
 .login-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  font-size: 26px;
+  display: block;
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
   margin: 0 auto 16px;
-  background: var(--accent-gradient);
-  border-radius: 16px;
-  box-shadow: 0 8px 32px var(--accent-glow);
+  filter: drop-shadow(0 6px 24px rgba(168, 85, 247, 0.5));
 }
 .login-title {
   font-size: 22px;

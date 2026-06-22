@@ -732,18 +732,54 @@ function downloadJob(j, cropMode = null) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+  const label = cropMode === "square" ? "carré" : cropMode === "rectangle" ? "rectangle" : "original";
+  toast(`Téléchargement ${label} : ${base}.png`, "success");
 }
 
 // ---------- Modal ----------
 let modalJob = null;
+
+function _succeededJobsSorted() {
+  // Sort by creation order so prev/next is intuitive (oldest first → newest last).
+  return state.jobs
+    .filter((j) => j.status === "succeeded" && j.has_result)
+    .sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
+}
+
+function _modalNavInfo() {
+  if (!modalJob) return { canPrev: false, canNext: false, position: 0, total: 0 };
+  const list = _succeededJobsSorted();
+  const idx = list.findIndex((j) => j.id === modalJob.id);
+  return {
+    canPrev: idx > 0,
+    canNext: idx >= 0 && idx < list.length - 1,
+    position: idx + 1,
+    total: list.length,
+    prev: idx > 0 ? list[idx - 1] : null,
+    next: idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null,
+  };
+}
 
 function openModal(j) {
   modalJob = j;
   $("#modal-img").src = `/api/jobs/${j.id}/result.png?t=${encodeURIComponent(j.finished_at || "")}`;
   $("#modal-title").textContent = `${j.params.icon_label || "icon"} · ${j.params.material_label}`;
   const elapsedStr = j.elapsed_ms ? `${(j.elapsed_ms/1000).toFixed(1)}s` : "—";
-  $("#modal-sub").textContent = `${j.params.width} × ${j.params.height} px · ${qualityLabel(j.params.quality)} · ${elapsedStr}`;
+  const nav = _modalNavInfo();
+  const counter = nav.total > 1 ? ` · ${nav.position}/${nav.total}` : "";
+  $("#modal-sub").textContent = `${j.params.width} × ${j.params.height} px · ${qualityLabel(j.params.quality)} · ${elapsedStr}${counter}`;
+  // toggle prev/next buttons
+  const prevBtn = $("#modal-prev");
+  const nextBtn = $("#modal-next");
+  if (prevBtn) prevBtn.disabled = !nav.canPrev;
+  if (nextBtn) nextBtn.disabled = !nav.canNext;
   $("#result-modal").classList.remove("hidden");
+}
+
+function modalNavigate(direction) {
+  const nav = _modalNavInfo();
+  const target = direction === "prev" ? nav.prev : nav.next;
+  if (target) openModal(target);
 }
 
 function closeModal() {
@@ -797,10 +833,25 @@ function bindMisc() {
     updateGenerateButton();
     enqueueJob();
   });
+  // Modal nav buttons (prev / next)
+  $("#modal-prev")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    modalNavigate("prev");
+  });
+  $("#modal-next")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    modalNavigate("next");
+  });
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeModal();
     if (e.key === "1" && e.altKey) switchTab("create");
     if (e.key === "2" && e.altKey) switchTab("gallery");
+    // Arrow keys navigate within the modal (only when it's open)
+    const modalOpen = !$("#result-modal").classList.contains("hidden");
+    if (modalOpen && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      modalNavigate(e.key === "ArrowLeft" ? "prev" : "next");
+    }
   });
 }
 

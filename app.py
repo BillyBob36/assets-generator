@@ -551,20 +551,52 @@ def get_job(job_id: str):
     return job_summary(j)
 
 
+def _crop_to_content(png_bytes: bytes, mode: str) -> bytes:
+    """Crop an RGBA PNG to its opaque content.
+
+    mode="rectangle" -> tight bounding box of opaque pixels (rectangular output).
+    mode="square"    -> square canvas sized to the LONGER side of the bbox,
+                        with the content centered and transparent margins. No
+                        opaque pixel is ever lost.
+    """
+    img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+    alpha = img.split()[-1]
+    bbox = alpha.getbbox()
+    if not bbox:
+        return png_bytes  # nothing to crop
+    cropped = img.crop(bbox)
+    if mode == "square":
+        side = max(cropped.size)
+        canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+        ox = (side - cropped.width) // 2
+        oy = (side - cropped.height) // 2
+        canvas.paste(cropped, (ox, oy), cropped)
+        cropped = canvas
+    out = io.BytesIO()
+    cropped.save(out, format="PNG", optimize=True)
+    return out.getvalue()
+
+
 @app.get("/api/jobs/{job_id}/result.png")
-def get_job_result(job_id: str):
+def get_job_result(job_id: str, crop: str | None = None):
     j = JOBS.get(job_id)
     if not j:
         raise HTTPException(status_code=404, detail="Job not found")
     if j["status"] != "succeeded" or "result_png" not in j:
         raise HTTPException(status_code=409, detail=f"Job not ready (status={j['status']})")
+    content = j["result_png"]
+    suffix = ""
+    if crop in ("square", "rectangle"):
+        content = _crop_to_content(content, crop)
+        suffix = f"-{crop}"
+    elif crop is not None:
+        raise HTTPException(status_code=400, detail="crop must be 'square' or 'rectangle'")
+    base = j["params"]["icon_label"] or "asset"
     return Response(
-        content=j["result_png"],
+        content=content,
         media_type="image/png",
         headers={
-            "Content-Disposition": f'inline; filename="{j["params"]["icon_label"] or "asset"}-'
-                                    f'{j["params"]["material_id"]}.png"',
-            # don't cache while job is fresh — the server may delete it
+            "Content-Disposition": f'inline; filename="{base}-{j["params"]["material_id"]}{suffix}.png"',
             "Cache-Control": "no-store",
         },
     )

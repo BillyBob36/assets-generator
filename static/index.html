@@ -67,6 +67,10 @@
         <button class="chip" data-q="star">star</button>
         <button class="chip" data-q="cloud">cloud</button>
         <button class="chip" data-q="trophy">trophy</button>
+        <button class="chip chip-upload" id="upload-btn" title="Upload PNG/WebP/SVG/AVIF">
+          <span style="font-size:13px;line-height:1">⬆</span> Uploader
+        </button>
+        <input type="file" id="upload-input" accept="image/png,image/webp,image/svg+xml,image/avif,image/gif" hidden>
       </div>
 
       <div class="icon-grid" id="icon-grid">
@@ -185,7 +189,9 @@
       <div class="modal-sub" id="modal-sub"></div>
     </div>
     <div class="modal-actions">
-      <button class="btn-secondary" id="modal-download">⬇ Télécharger PNG</button>
+      <button class="btn-secondary" id="modal-download" title="PNG original généré">⬇ Original</button>
+      <button class="btn-secondary" id="modal-crop-square" title="Crop carré, côté = plus grande dimension (rien perdu)">▢ Carré</button>
+      <button class="btn-secondary" id="modal-crop-rect" title="Crop rectangulaire tight sur le contenu">▭ Rectangle</button>
       <button class="btn-secondary" id="modal-redo">↻ Régénérer</button>
     </div>
   </div>

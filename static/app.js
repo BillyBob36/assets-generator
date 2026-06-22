@@ -183,12 +183,53 @@ function bindSearch() {
     clearTimeout(timer);
     timer = setTimeout(() => searchIcons(e.target.value), 280);
   });
-  $$(".chip").forEach((chip) =>
+  // Only search-suggestion chips (have data-q). The upload chip is handled separately.
+  $$(".chip[data-q]").forEach((chip) =>
     chip.addEventListener("click", () => {
       input.value = chip.dataset.q;
       searchIcons(chip.dataset.q);
     }),
   );
+  // Custom file upload
+  const uploadBtn = $("#upload-btn");
+  const uploadInput = $("#upload-input");
+  if (uploadBtn && uploadInput) {
+    uploadBtn.addEventListener("click", () => uploadInput.click());
+    uploadInput.addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (file) await handleCustomUpload(file);
+      e.target.value = ""; // allow re-selecting the same file
+    });
+  }
+}
+
+async function handleCustomUpload(file) {
+  // 8 MB cap — matches the backend's /api/jobs limit
+  if (file.size > 8 * 1024 * 1024) {
+    toast("Fichier trop gros (max 8 MB)", "error");
+    return;
+  }
+  const rawName = file.name.replace(/\.[^.]+$/, "").slice(0, 60);
+  const safeName = rawName.replace(/[^a-zA-Z0-9-_]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "custom";
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(new Error("FileReader error"));
+      r.readAsDataURL(file);
+    });
+    const customIcon = {
+      id: `custom:${safeName}`,
+      prefix: "custom",
+      name: safeName,
+      svg_url: dataUrl,        // used for thumbnail and to load into <img> when rasterising
+      customDataUrl: dataUrl,
+    };
+    selectIcon(customIcon);
+    toast(`Icône uploadée : ${file.name}`, "info");
+  } catch (err) {
+    toast(`Erreur d'upload : ${err.message}`, "error");
+  }
 }
 
 async function searchIcons(query) {
@@ -246,8 +287,11 @@ function selectIcon(ic) {
   );
   const thumb = $("#sum-icon");
   const value = $("#sum-icon-value");
-  thumb.innerHTML = `<img src="${ic.svg_url}" alt="${ic.name}" class="icon-thumb">`;
-  value.textContent = ic.name;
+  // Iconify icons are monochrome black SVGs → invert filter to display on dark UI.
+  // Custom uploads keep their original colors → no filter.
+  const cls = ic.prefix === "custom" ? "" : "icon-thumb";
+  thumb.innerHTML = `<img src="${ic.svg_url}" alt="${ic.name}" class="${cls}">`;
+  value.textContent = ic.prefix === "custom" ? `${ic.name} (upload)` : ic.name;
   value.classList.remove("empty");
   updateGenerateButton();
 }
@@ -355,47 +399,57 @@ async function enqueueJob() {
 }
 
 async function rasterizeIconSvg(icon, width, height) {
-  const resp = await fetch(
-    `/api/icon-svg?prefix=${encodeURIComponent(icon.prefix)}&name=${encodeURIComponent(icon.name)}`,
-  );
-  if (!resp.ok) throw new Error(`SVG fetch failed: ${resp.status}`);
-  let svgText = await resp.text();
-
   const shortest = Math.min(width, height);
   const iconBoxSize = Math.round(shortest * 0.8);
-  if (/\swidth=/.test(svgText)) {
-    svgText = svgText.replace(/\swidth="[^"]+"/, ` width="${iconBoxSize}"`);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  // White background: gives the model a clear high-contrast silhouette to anchor on.
+  // The no-shadow / "erase the white" enforcement happens in the prompt.
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, width, height);
+
+  if (icon.prefix === "custom") {
+    // Custom upload (PNG/WebP/SVG/AVIF/GIF): draw the raster directly,
+    // preserving its aspect ratio so non-square uploads aren't distorted.
+    // svg_url falls back here for re-runs reconstructed from job params.
+    const img = await loadImage(icon.customDataUrl || icon.svg_url);
+    const ar = (img.width || 1) / (img.height || 1);
+    let dw, dh;
+    if (ar >= 1) { dw = iconBoxSize; dh = Math.round(iconBoxSize / ar); }
+    else         { dh = iconBoxSize; dw = Math.round(iconBoxSize * ar); }
+    const dx = Math.round((width - dw) / 2);
+    const dy = Math.round((height - dh) / 2);
+    ctx.drawImage(img, dx, dy, dw, dh);
   } else {
-    svgText = svgText.replace(/<svg/, `<svg width="${iconBoxSize}"`);
-  }
-  if (/\sheight=/.test(svgText)) {
-    svgText = svgText.replace(/\sheight="[^"]+"/, ` height="${iconBoxSize}"`);
-  } else {
-    svgText = svgText.replace(/<svg/, `<svg height="${iconBoxSize}"`);
+    // Iconify path — fetch the SVG via our backend proxy and inject explicit
+    // width/height (Iconify SVGs use width="1em" which doesn't resolve cleanly
+    // when loaded via Blob URL).
+    const resp = await fetch(
+      `/api/icon-svg?prefix=${encodeURIComponent(icon.prefix)}&name=${encodeURIComponent(icon.name)}`,
+    );
+    if (!resp.ok) throw new Error(`SVG fetch failed: ${resp.status}`);
+    let svgText = await resp.text();
+    if (/\swidth=/.test(svgText))  svgText = svgText.replace(/\swidth="[^"]+"/,  ` width="${iconBoxSize}"`);
+    else                            svgText = svgText.replace(/<svg/, `<svg width="${iconBoxSize}"`);
+    if (/\sheight=/.test(svgText)) svgText = svgText.replace(/\sheight="[^"]+"/, ` height="${iconBoxSize}"`);
+    else                            svgText = svgText.replace(/<svg/, `<svg height="${iconBoxSize}"`);
+    const blob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    try {
+      const img = await loadImage(url);
+      const dx = Math.round((width - iconBoxSize) / 2);
+      const dy = Math.round((height - iconBoxSize) / 2);
+      ctx.drawImage(img, dx, dy, iconBoxSize, iconBoxSize);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   }
 
-  const blob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  try {
-    const img = await loadImage(url);
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    // White background: gives the model a clear high-contrast silhouette to anchor on.
-    // (Transparent input caused the model to hallucinate unrelated subjects.)
-    // The no-shadow / "erase the white" enforcement happens in the prompt.
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, width, height);
-    const dx = Math.round((width - iconBoxSize) / 2);
-    const dy = Math.round((height - iconBoxSize) / 2);
-    ctx.drawImage(img, dx, dy, iconBoxSize, iconBoxSize);
-    return await new Promise((resolve, reject) =>
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/png"),
-    );
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  return await new Promise((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/png"),
+  );
 }
 
 function loadImage(src) {
@@ -555,10 +609,21 @@ function renderGalleryCard(j) {
   if (j.status === "succeeded") {
     const dl = document.createElement("button");
     dl.className = "btn-icon flex";
-    dl.title = "Télécharger";
+    dl.title = "Télécharger l'original";
     dl.innerHTML = "⬇ Télécharger";
     dl.addEventListener("click", (e) => { e.stopPropagation(); downloadJob(j); });
     actions.appendChild(dl);
+
+    const crop = document.createElement("button");
+    crop.className = "btn-icon";
+    crop.title = "Auto-crop selon le contenu";
+    crop.innerHTML = "✂";
+    crop.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openCropPopover(crop, j);
+    });
+    actions.appendChild(crop);
+
     card.addEventListener("click", () => openModal(j));
   }
   if (j.status === "failed" && j.error) {
@@ -573,6 +638,59 @@ function renderGalleryCard(j) {
   actions.appendChild(del);
 
   return card;
+}
+
+let activeCropPop = null;
+
+function closeCropPopover() {
+  if (activeCropPop) {
+    activeCropPop.remove();
+    activeCropPop = null;
+    document.removeEventListener("click", _cropPopOutsideHandler, true);
+  }
+}
+
+function _cropPopOutsideHandler(e) {
+  if (activeCropPop && !activeCropPop.contains(e.target)) closeCropPopover();
+}
+
+function openCropPopover(anchor, j) {
+  if (activeCropPop) { closeCropPopover(); return; }
+  const pop = document.createElement("div");
+  pop.className = "crop-pop";
+  pop.innerHTML = `
+    <button data-mode="square">
+      <span class="pop-icon">▢</span>
+      <span>Carré
+        <span class="pop-sub">côté = plus grande dimension</span>
+      </span>
+    </button>
+    <button data-mode="rectangle">
+      <span class="pop-icon">▭</span>
+      <span>Rectangle
+        <span class="pop-sub">tight crop sur le contenu</span>
+      </span>
+    </button>
+  `;
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  // anchor below-left of the button
+  const pw = pop.offsetWidth;
+  let left = Math.round(r.right - pw);
+  if (left < 6) left = 6;
+  pop.style.left = `${left}px`;
+  pop.style.top = `${Math.round(r.bottom + 4)}px`;
+  pop.querySelectorAll("button").forEach((b) =>
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const mode = b.dataset.mode;
+      downloadJob(j, mode);
+      closeCropPopover();
+    }),
+  );
+  activeCropPop = pop;
+  // close on outside click (next tick so this click doesn't trigger immediately)
+  setTimeout(() => document.addEventListener("click", _cropPopOutsideHandler, true), 0);
 }
 
 function qualityLabel(q) {
@@ -604,11 +722,13 @@ async function clearCompleted() {
   }
 }
 
-function downloadJob(j) {
-  const filename = `${j.params.icon_label || "asset"}-${j.params.material_id}-${j.params.width}x${j.params.height}.png`;
+function downloadJob(j, cropMode = null) {
+  const suffix = cropMode ? `-${cropMode}` : "";
+  const base = `${j.params.icon_label || "asset"}-${j.params.material_id}-${j.params.width}x${j.params.height}${suffix}`;
+  const cropParam = cropMode ? `&crop=${cropMode}` : "";
   const a = document.createElement("a");
-  a.href = `/api/jobs/${j.id}/result.png?t=${encodeURIComponent(j.finished_at || "")}`;
-  a.download = filename;
+  a.href = `/api/jobs/${j.id}/result.png?t=${encodeURIComponent(j.finished_at || "")}${cropParam}`;
+  a.download = `${base}.png`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -637,6 +757,12 @@ function bindMisc() {
   $(".modal-backdrop").addEventListener("click", closeModal);
   $("#modal-download").addEventListener("click", () => {
     if (modalJob) downloadJob(modalJob);
+  });
+  $("#modal-crop-square").addEventListener("click", () => {
+    if (modalJob) downloadJob(modalJob, "square");
+  });
+  $("#modal-crop-rect").addEventListener("click", () => {
+    if (modalJob) downloadJob(modalJob, "rectangle");
   });
   $("#modal-redo").addEventListener("click", () => {
     if (!modalJob) return;

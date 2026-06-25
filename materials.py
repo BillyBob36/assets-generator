@@ -21,6 +21,32 @@ MATERIALS: dict[str, dict] = {
             "luxury jewelry finish"
         ),
     },
+    "silver": {
+        "id": "silver",
+        "label": "Argent",
+        "emoji": "\U0001F948",
+        "swatch": "linear-gradient(135deg,#f8fafc 0%,#94a3b8 50%,#334155 100%)",
+        "description": "Argent massif poli, finition satinée",
+        "material_phrase": "polished sterling silver",
+        "details": (
+            "bright silvery-white tone with a barely-warm cast in the highlights, "
+            "soft satin sheen, crisp specular highlights without harsh mirror reflections, "
+            "fine jewelry finish, slightly softer and less blue than chrome"
+        ),
+    },
+    "bronze": {
+        "id": "bronze",
+        "label": "Bronze",
+        "emoji": "\U0001F949",
+        "swatch": "linear-gradient(135deg,#fbbf24 0%,#b45309 50%,#451a03 100%)",
+        "description": "Bronze poli, ton chaud cuivré",
+        "material_phrase": "polished antique bronze",
+        "details": (
+            "warm coppery-brown tone with hints of orange and amber, "
+            "subtle darker patina in the recesses, semi-polished cast-metal finish, "
+            "softer specular highlights than gold, weighty foundry aesthetic"
+        ),
+    },
     "chrome": {
         "id": "chrome",
         "label": "Chrome",

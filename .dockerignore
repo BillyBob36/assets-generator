@@ -15,6 +15,10 @@ venv
 _test_*
 _probe_*
 _shadow_test_*
+_persist_*
+_picto_*
+_debug_*
+data/
 *.log
 README.md
 start.bat

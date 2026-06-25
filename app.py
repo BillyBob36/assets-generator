@@ -21,8 +21,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import json
 import os
 import secrets
+import shutil
 import sys
 import time
 import urllib.parse
@@ -86,9 +88,18 @@ GENERATION_SIZES = {
     "2:3": (1024, 1536),
 }
 
-# ---------------- Job store (in-memory) ----------------
-# Single-process FastAPI -> a plain dict is fine. Jobs survive only as long as
-# the server process runs.
+# ---------------- Job store (disk-backed) ----------------
+# JOBS dict caches metadata in memory; PNG bytes live on disk under STORAGE_DIR.
+# This survives container restarts (Coolify volume mounted on /app/data).
+#
+# Layout: STORAGE_DIR/jobs/{job_id}/
+#           meta.json     — metadata (same shape as the in-memory dict)
+#           input.png     — what we sent to Azure (kept for re-runs and debug)
+#           result.png    — the generated asset (present iff status=succeeded)
+STORAGE_DIR = Path(os.environ.get("STORAGE_DIR", str(BASE_DIR / "data")))
+JOBS_DIR = STORAGE_DIR / "jobs"
+JOBS_DIR.mkdir(parents=True, exist_ok=True)
+
 JOBS: dict[str, dict[str, Any]] = {}
 job_queue: asyncio.Queue[str] = asyncio.Queue()
 
@@ -97,8 +108,56 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _job_dir(job_id: str) -> Path:
+    return JOBS_DIR / job_id
+
+
+def _save_meta(job: dict) -> None:
+    """Persist a job's metadata to disk. Safe to call any time after _job_dir exists."""
+    d = _job_dir(job["id"])
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "meta.json").write_text(json.dumps(job), encoding="utf-8")
+
+
+def _rehydrate_jobs() -> None:
+    """Scan JOBS_DIR on startup, load all meta.json into JOBS, mark interrupted jobs failed."""
+    if not JOBS_DIR.exists():
+        return
+    rehydrated = 0
+    for d in JOBS_DIR.iterdir():
+        if not d.is_dir():
+            continue
+        meta_path = d / "meta.json"
+        if not meta_path.exists():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"[rehydrate] skipping {d.name}: {e}", file=sys.stderr)
+            continue
+        if not meta.get("id"):
+            continue
+        # In-flight jobs at the moment of shutdown can't be resumed (Azure call was lost).
+        # Mark them failed so the user sees what happened.
+        if meta.get("status") in ("queued", "in_progress"):
+            meta["status"] = "failed"
+            meta["error"] = "Interrupted by server restart"
+            if not meta.get("finished_at"):
+                meta["finished_at"] = now_iso()
+            try:
+                _save_meta(meta)
+            except OSError:
+                pass
+        # has_result is the source of truth: cross-check against actual file
+        meta["has_result"] = (d / "result.png").exists() and meta.get("status") == "succeeded"
+        JOBS[meta["id"]] = meta
+        rehydrated += 1
+    if rehydrated:
+        print(f"[rehydrate] loaded {rehydrated} job(s) from {JOBS_DIR}", file=sys.stderr)
+
+
 def job_summary(j: dict) -> dict:
-    """Strip heavy fields for list endpoints."""
+    """Strip heavy fields for list endpoints (kept lean: input/result PNGs are on disk)."""
     return {
         "id": j["id"],
         "status": j["status"],
@@ -106,9 +165,9 @@ def job_summary(j: dict) -> dict:
         "started_at": j.get("started_at"),
         "finished_at": j.get("finished_at"),
         "params": j["params"],
-        "icon_svg_url": j["icon_svg_url"],
+        "icon_svg_url": j.get("icon_svg_url", ""),
         "error": j.get("error"),
-        "has_result": "result_png" in j,
+        "has_result": bool(j.get("has_result")),
         "elapsed_ms": j.get("elapsed_ms"),
     }
 
@@ -155,10 +214,12 @@ async def _process(job_id: str) -> None:
         return
     job["status"] = "in_progress"
     job["started_at"] = now_iso()
+    _save_meta(job)
     t0 = time.monotonic()
     try:
         result_png = await asyncio.to_thread(_do_generation, job)
-        job["result_png"] = result_png
+        (_job_dir(job_id) / "result.png").write_bytes(result_png)
+        job["has_result"] = True
         job["status"] = "succeeded"
     except Exception as e:
         job["status"] = "failed"
@@ -166,12 +227,14 @@ async def _process(job_id: str) -> None:
     finally:
         job["finished_at"] = now_iso()
         job["elapsed_ms"] = int((time.monotonic() - t0) * 1000)
+        _save_meta(job)
 
 
 def _do_generation(job: dict) -> bytes:
     """Synchronous Azure call (runs in a worker thread). Returns final PNG bytes."""
     params = job["params"]
-    img_bytes = job["input_png"]
+    # Input PNG is on disk (we wrote it in create_job and on rehydrate).
+    img_bytes = (_job_dir(job["id"]) / "input.png").read_bytes()
 
     gen_w, gen_h = GENERATION_SIZES[params["ratio"]]
     prompt = build_prompt(params["material_id"], params.get("icon_label", ""))
@@ -237,8 +300,9 @@ def _azure_post_with_retry(url: str, headers: dict, data: dict, files: list,
 # ---------------- FastAPI lifespan + app ----------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _rehydrate_jobs()
     workers = [asyncio.create_task(worker_loop(i)) for i in range(MAX_CONCURRENCY)]
-    print(f"[lifespan] started {MAX_CONCURRENCY} workers", file=sys.stderr)
+    print(f"[lifespan] started {MAX_CONCURRENCY} workers, storage: {STORAGE_DIR}", file=sys.stderr)
     try:
         yield
     finally:
@@ -511,8 +575,8 @@ async def create_job(
         "id": job_id,
         "status": "queued",
         "created_at": now_iso(),
-        "input_png": img_bytes,
         "icon_svg_url": icon_svg_url,
+        "has_result": False,
         "params": {
             "material_id": material_id,
             "material_label": MATERIALS[material_id]["label"],
@@ -524,6 +588,10 @@ async def create_job(
             "quality": quality,
         },
     }
+    # Write input PNG + meta to disk so the job survives a restart.
+    _job_dir(job_id).mkdir(parents=True, exist_ok=True)
+    (_job_dir(job_id) / "input.png").write_bytes(img_bytes)
+    _save_meta(JOBS[job_id])
     await job_queue.put(job_id)
     return {
         "id": job_id,
@@ -583,9 +651,12 @@ def get_job_result(job_id: str, crop: str | None = None):
     j = JOBS.get(job_id)
     if not j:
         raise HTTPException(status_code=404, detail="Job not found")
-    if j["status"] != "succeeded" or "result_png" not in j:
+    if j["status"] != "succeeded":
         raise HTTPException(status_code=409, detail=f"Job not ready (status={j['status']})")
-    content = j["result_png"]
+    result_path = _job_dir(job_id) / "result.png"
+    if not result_path.exists():
+        raise HTTPException(status_code=410, detail="Result PNG missing on disk")
+    content = result_path.read_bytes()
     suffix = ""
     if crop in ("square", "rectangle"):
         content = _crop_to_content(content, crop)
@@ -605,18 +676,15 @@ def get_job_result(job_id: str, crop: str | None = None):
 
 @app.get("/api/jobs/{job_id}/input.png")
 def get_job_input(job_id: str):
-    """Debug endpoint: return the exact PNG that was sent to Azure for this job.
-
-    Useful when the output looks unrelated to the chosen icon — lets the user
-    verify whether the rasterised input matched their selection.
-    """
+    """Debug endpoint: return the exact PNG that was sent to Azure for this job."""
     j = JOBS.get(job_id)
     if not j:
         raise HTTPException(status_code=404, detail="Job not found")
-    if "input_png" not in j:
+    input_path = _job_dir(job_id) / "input.png"
+    if not input_path.exists():
         raise HTTPException(status_code=410, detail="Input PNG no longer available")
     return Response(
-        content=j["input_png"],
+        content=input_path.read_bytes(),
         media_type="image/png",
         headers={
             "Content-Disposition": f'inline; filename="input-{j["params"]["icon_label"] or "icon"}.png"',
@@ -634,9 +702,12 @@ def delete_job(job_id: str):
     if j["status"] == "queued":
         j["status"] = "cancelled"
         j["finished_at"] = now_iso()
-    # For terminal states, just remove from store.
+    # For terminal states, remove from store + disk.
     if j["status"] in ("succeeded", "failed", "cancelled"):
         JOBS.pop(job_id, None)
+        shutil.rmtree(_job_dir(job_id), ignore_errors=True)
+    else:
+        _save_meta(j)  # persist the cancelled-from-queued state if still in mem
     # In-progress jobs cannot be aborted mid-flight (Azure call already inflight) —
     # they will complete and the user can delete them afterward.
     return {"ok": True, "status": j["status"]}
@@ -650,6 +721,7 @@ def clear_completed():
     ]
     for jid in to_remove:
         JOBS.pop(jid, None)
+        shutil.rmtree(_job_dir(jid), ignore_errors=True)
     return {"removed": len(to_remove)}
 
 

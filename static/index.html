@@ -81,8 +81,11 @@
       </div>
     </section>
 
-    <!-- Column: Materials -->
-    <section class="col col-materials">
+    <!-- Column: Materials (becomes a bottom sheet on mobile) -->
+    <section class="col col-materials" id="col-materials">
+      <!-- Mobile-only sheet handle + close button (hidden on desktop) -->
+      <div class="mobile-sheet-handle" aria-hidden="true"></div>
+      <button class="mobile-sheet-close" id="mobile-sheet-close" aria-label="Fermer">✕</button>
       <div class="col-head">
         <h2 class="col-title"><span class="step-num">2</span> Matériau</h2>
         <span class="col-sub">Previews 3D générés</span>
@@ -154,6 +157,15 @@
       <span class="btn-label">+ Ajouter</span>
     </button>
   </footer>
+
+  <!-- Mobile-only: tap-to-close backdrop behind the material sheet (hidden on desktop) -->
+  <div class="mobile-sheet-backdrop" id="mobile-sheet-backdrop" aria-hidden="true"></div>
+
+  <!-- Mobile-only: sticky bottom "configure" trigger (visible while sheet is closed) -->
+  <button class="mobile-sheet-trigger" id="mobile-sheet-trigger" aria-label="Configurer">
+    <span class="trigger-label">Matériau &amp; format</span>
+    <span class="trigger-arrow">↑</span>
+  </button>
 </main>
 
 <!-- =========================== GALERIE TAB =========================== -->

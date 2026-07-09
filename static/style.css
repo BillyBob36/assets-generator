@@ -1136,92 +1136,316 @@ body {
 }
 
 /* =========================================================================
-   MOBILE / NARROW VIEWPORTS
-   On phones and narrow tablets the desktop 3-column action-bar and the
-   user/concurrency chips in the topbar would overflow. Stack things
-   vertically and hide secondary chips so the core flow stays usable.
-   ========================================================================= */
-@media (max-width: 720px) {
-  :root { --footer-h: auto; }
+   MOBILE — COMPLETE REDESIGN (≤ 720px)
 
-  .topbar { padding: 0 12px; }
+   Desktop stays untouched above; below 720px we switch to a mobile-native
+   layout:
+     - Compact topbar (rocket + tabs pill + tiny avatar)
+     - Créer tab: icon grid takes the full screen with a sticky bottom
+       "Matériau & format ↑" trigger. Tapping it opens a bottom sheet that
+       slides up with the material picker + format controls + big CTA.
+     - Galerie tab: 2-column card grid.
+     - Modal: full-screen, edge-to-edge, with large touch-friendly nav
+       zones and a bottom action bar.
+
+   The mobile-sheet elements (handle, close, backdrop, trigger) are added
+   in HTML but hidden on desktop via `display: none` at the base layer.
+   ========================================================================= */
+
+/* Hide mobile-only elements on desktop */
+.mobile-sheet-handle,
+.mobile-sheet-close,
+.mobile-sheet-backdrop,
+.mobile-sheet-trigger { display: none; }
+
+@media (max-width: 720px) {
+  :root { --topbar-h: 52px; --footer-h: auto; }
+
+  /* ---------- TOP BAR (compact) ---------- */
+  .topbar { padding: 0 10px; height: var(--topbar-h); }
   .brand { gap: 8px; }
   .brand-mark { width: 30px; height: 30px; }
-  .brand-text { display: none; }   /* keep only the rocket on tiny screens */
-
+  .brand-text { display: none; }
+  .tabs { padding: 3px; gap: 2px; }
   .tab { padding: 6px 12px; font-size: 12px; }
-  .tab-icon { display: none; }     /* labels are enough */
-
-  /* Hide the secondary chips, keep just the user chip (collapsed) */
+  .tab-icon { display: none; }
   #meta-concurrency, #meta-flight { display: none; }
-  .user-chip {
-    padding: 4px;
-    gap: 4px;
-  }
-  .user-email { display: none; }   /* avatar + logout only */
+  .user-chip { padding: 3px; gap: 3px; }
+  .user-email { display: none; }
+  .user-avatar { width: 24px; height: 24px; }
+  .user-logout { padding: 4px 6px; font-size: 12px; }
 
-  /* Action bar: stack vertically (summary → format → button) */
+  /* ---------- CRÉER TAB ---------- */
+  /* Icon column takes the whole viewport (below topbar, above trigger). */
+  .create-grid {
+    grid-template-columns: 1fr;
+    padding: 10px 10px 68px;   /* reserve room for the sticky trigger */
+    gap: 0;
+  }
+  .col-icons { min-height: 0; }
+  .col-head { padding: 0 2px; }
+  .suggestions { gap: 4px; }
+  .chip { font-size: 11px; padding: 3px 8px; }
+  .icon-grid {
+    grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+    padding: 8px;
+    gap: 6px;
+  }
+  .icon-card { padding: 8px; }
+
+  /* Sticky bottom trigger — visible while sheet is closed */
+  .mobile-sheet-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: fixed;
+    bottom: 10px;
+    left: 10px;
+    right: 10px;
+    height: 52px;
+    padding: 0 20px;
+    background: var(--accent-gradient);
+    color: white;
+    border: none;
+    border-radius: 14px;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    z-index: 30;
+    box-shadow: 0 6px 20px var(--accent-glow);
+    transition: transform 0.15s;
+  }
+  .mobile-sheet-trigger:active { transform: scale(0.98); }
+  .mobile-sheet-trigger .trigger-arrow { font-size: 16px; opacity: 0.85; }
+  body.mobile-sheet-open .mobile-sheet-trigger { display: none; }
+  /* Also hide the trigger when we're not on the "create" tab */
+  body:not(.on-create) .mobile-sheet-trigger { display: none; }
+
+  /* Materials column becomes a bottom sheet (starts hidden, slides up on open) */
+  .col-materials {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    max-height: 88vh;
+    z-index: 50;
+    background: var(--bg-elev);
+    border-radius: 22px 22px 0 0;
+    padding: 8px 14px 16px;
+    box-shadow: 0 -14px 40px rgba(0, 0, 0, 0.55);
+    transform: translateY(102%);
+    transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  body.mobile-sheet-open .col-materials { transform: translateY(0); }
+
+  .mobile-sheet-handle {
+    display: block;
+    width: 42px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border-strong);
+    margin: 6px auto 8px;
+  }
+  .mobile-sheet-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 32px;
+    height: 32px;
+    background: var(--bg-elev-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text-dim);
+    font-size: 14px;
+    cursor: pointer;
+    font-family: inherit;
+    z-index: 2;
+  }
+  .mobile-sheet-close:hover { color: var(--text); }
+
+  /* Backdrop */
+  .mobile-sheet-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(6, 6, 10, 0.55);
+    backdrop-filter: blur(2px);
+    z-index: 45;
+    animation: fade-in 0.2s ease;
+  }
+  body.mobile-sheet-open .mobile-sheet-backdrop { display: block; }
+  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+  /* Material grid inside sheet: 3 cols, bigger touch targets */
+  .material-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    max-height: none;
+    overflow: visible;
+  }
+  .material-card { padding: 10px 6px; }
+  .material-label { font-size: 11px; }
+
+  /* Action bar: appears INSIDE the sheet on mobile (JS moves it there) */
+  /* It becomes a stacked block at the bottom of the sheet with format + CTA */
   .action-bar {
     height: auto;
-    grid-template-columns: minmax(0, 1fr);  /* allow children to shrink below content width */
+    grid-template-columns: minmax(0, 1fr);
     gap: 12px;
-    padding: 12px 14px;
-    margin: 10px 12px 12px;
-    overflow: hidden;
+    padding: 12px 0 0;
+    margin: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+    border-top: 1px solid var(--border);
   }
-  .action-summary { gap: 8px; min-width: 0; flex-wrap: wrap; }
+  .action-summary { gap: 10px; min-width: 0; padding: 4px 2px; }
   .sum-thumb { width: 44px; height: 44px; flex-shrink: 0; }
   .sum-info { min-width: 0; flex: 1 1 0; }
-  .sum-value { max-width: none; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sum-value {
+    max-width: none; font-size: 13px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .sum-label { font-size: 9px; }
-  .sum-arrow { font-size: 12px; }
+  .sum-arrow { font-size: 14px; }
 
   .action-format {
     grid-template-columns: 1fr 1fr;
     gap: 10px;
   }
+  .control-mini label { font-size: 10px; }
   .control-output { grid-column: 1 / -1; align-items: stretch; }
-  .output-badge { text-align: center; }
+  .output-badge { text-align: center; font-size: 13px; padding: 8px 14px; }
+  .pill { padding: 8px 8px; font-size: 12px; }
 
-  .btn-primary { width: 100%; height: 46px; padding: 0 16px; font-size: 13px; }
-
-  /* Create grid: already collapses at 980px via the existing media query. */
-  .create-grid { padding: 12px 12px 0; gap: 12px; }
-  .col { gap: 8px; }
-  .material-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
-    padding: 10px;
+  .btn-primary {
+    width: 100%;
+    height: 52px;
+    padding: 0 16px;
+    font-size: 15px;
+    margin-top: 4px;
   }
-  .suggestions { gap: 4px; }
-  .chip { font-size: 10px; padding: 3px 7px; }
-  .icon-grid { grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); padding: 6px; }
+  .btn-help { display: none; }
 
-  /* Gallery: smaller cards, smaller padding */
-  .gallery-toolbar { padding: 10px 12px; flex-wrap: wrap; gap: 8px; }
-  .gallery-filters { flex-wrap: wrap; }
+  /* ---------- GALERIE TAB ---------- */
+  .gallery-toolbar {
+    padding: 10px 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .gallery-filters { flex-wrap: wrap; gap: 5px; }
   .filter-chip { padding: 5px 10px; font-size: 11px; }
   .gallery-grid {
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
-    padding: 12px;
+    padding: 10px;
+    padding-bottom: 20px;
   }
-  .gal-title { font-size: 11px; }
-  .gal-meta { font-size: 9px; }
+  .gal-title { font-size: 12px; }
+  .gal-meta { font-size: 10px; }
+  .gal-info { padding: 8px 10px; }
+  .gal-actions { padding: 0 8px 8px; gap: 4px; }
+  .gal-actions .btn-icon { height: 32px; font-size: 12px; padding: 0 8px; }
 
-  /* Modal: full-width on tiny screens, stacked actions */
-  .modal-card { padding: 16px; width: 96vw; }
-  .modal-actions { flex-wrap: wrap; }
-  .modal-actions .btn-secondary { flex: 1 1 calc(50% - 4px); font-size: 12px; padding: 9px 8px; }
-  .modal-preview { padding: 10px; max-height: 50vh; }
-  .modal-title { font-size: 14px; }
-  .modal-sub { font-size: 11px; }
+  /* ---------- MODAL — FULL-SCREEN ---------- */
+  .modal {
+    align-items: stretch;
+    justify-content: stretch;
+  }
+  .modal-backdrop { display: none; }
+  .modal-card {
+    width: 100%;
+    max-width: 100%;
+    max-height: 100vh;
+    height: 100vh;
+    padding: 0;
+    border-radius: 0;
+    background: var(--bg);
+    display: grid;
+    grid-template-rows: auto 1fr auto auto;
+    animation: modal-slide-up 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+    box-shadow: none;
+  }
+  @keyframes modal-slide-up {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+
+  /* Top strip: close button */
+  .modal-close {
+    position: relative;
+    top: 0; right: 0;
+    justify-self: end;
+    margin: 10px 12px 0;
+    width: 40px; height: 40px;
+    background: var(--bg-elev);
+    font-size: 15px;
+  }
+
+  /* Preview fills the middle row */
+  .modal-preview {
+    aspect-ratio: unset;
+    max-height: none;
+    margin: 8px 12px;
+    padding: 16px;
+    border-radius: 12px;
+  }
+  .modal-preview img { width: 100%; height: 100%; }
+
+  /* Info block */
+  .modal-info {
+    padding: 4px 16px 12px;
+    text-align: center;
+  }
+  .modal-title { font-size: 15px; }
+  .modal-sub { font-size: 12px; }
+
+  /* Bottom actions: two rows of 2 buttons + regen full-width below */
+  .modal-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 10px 12px 16px;
+    background: var(--bg-elev);
+    border-top: 1px solid var(--border);
+  }
+  .modal-actions .btn-secondary {
+    padding: 12px 8px;
+    font-size: 13px;
+  }
+  #modal-redo { grid-column: 1 / -1; }
+
+  /* Prev/next: bigger tap zones on the sides */
+  .modal-nav {
+    width: 44px;
+    height: 62px;
+    background: rgba(15, 15, 18, 0.85);
+    font-size: 26px;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  .modal-nav-prev { left: 10px; }
+  .modal-nav-next { right: 10px; }
 }
 
-/* Extra-narrow phones (< 400px) — even more compact */
-@media (max-width: 400px) {
+/* ---------- Extra-narrow phones (≤ 380px) ---------- */
+@media (max-width: 380px) {
   .material-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .modal-actions .btn-secondary { flex: 1 1 100%; }
+  .gallery-grid { grid-template-columns: 1fr; }
+  .action-format { grid-template-columns: 1fr; }
 }
 
 /* =========================================================================

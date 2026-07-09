@@ -45,6 +45,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   bindGalleryFilters();
   bindMisc();
   bindAuth();
+  bindMobileSheet();
+  applyMobileLayout();
+  window.addEventListener("resize", _debounce(applyMobileLayout, 150));
+  bindModalTouchSwipe();
   updateOutputLabel();
   ensurePolling();
 });
@@ -124,6 +128,10 @@ function switchTab(tabName) {
   state.activeTab = tabName;
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tabName));
   $$(".tab-pane").forEach((p) => p.classList.toggle("active", p.dataset.pane === tabName));
+  // Body class so the mobile bottom trigger only appears on the Créer tab.
+  document.body.classList.toggle("on-create", tabName === "create");
+  // Leaving Créer while the sheet is open would strand the sheet — close it.
+  if (tabName !== "create") closeMobileSheet();
 }
 
 // ---------- Materials ----------
@@ -294,6 +302,9 @@ function selectIcon(ic) {
   value.textContent = ic.prefix === "custom" ? `${ic.name} (upload)` : ic.name;
   value.classList.remove("empty");
   updateGenerateButton();
+  // Mobile flow: after picking an icon, slide the material/format sheet up
+  // so the user can complete the flow in one gesture.
+  if (_isMobileLayout() && !state.selectedMaterial) openMobileSheet();
 }
 
 // ---------- Controls ----------
@@ -389,6 +400,8 @@ async function enqueueJob() {
       : "Ajouté à la file • démarrage immédiat", "info");
     await refreshJobs();
     ensurePolling();
+    // Mobile: close the sheet so the icon grid is visible again to iterate.
+    if (_isMobileLayout()) closeMobileSheet();
   } catch (e) {
     console.error(e);
     toast(`Erreur : ${e.message}`, "error");
@@ -863,4 +876,108 @@ function toast(message, kind = "") {
   t.className = `toast ${kind}`;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.add("hidden"), 4000);
+}
+
+// ---------- Mobile bottom sheet ----------
+// On mobile (<= 720px) the material picker + format controls live inside a
+// bottom sheet that slides up on demand. To keep desktop CSS untouched, we
+// physically move the .action-bar into .col-materials in the DOM when the
+// layout enters "mobile" mode, and move it back out on resize to desktop.
+// This preserves a single instance (state + events stay bound) and lets CSS
+// style the sheet naturally.
+
+const MOBILE_BREAKPOINT = 720;
+
+function _isMobileLayout() {
+  return window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`).matches;
+}
+
+let _lastMobileLayout = null;
+
+function applyMobileLayout() {
+  const mobile = _isMobileLayout();
+  document.body.classList.toggle("on-create", state.activeTab === "create");
+  if (mobile === _lastMobileLayout) return;
+  _lastMobileLayout = mobile;
+
+  const actionBar = document.querySelector(".action-bar");
+  const materials = document.querySelector(".col-materials");
+  const paneCreate = document.querySelector('.tab-pane[data-pane="create"]');
+  if (!actionBar || !materials || !paneCreate) return;
+
+  if (mobile) {
+    // Move action-bar to become the bottom of the sheet
+    materials.appendChild(actionBar);
+    // Ensure the sheet is closed by default when switching in
+    closeMobileSheet();
+  } else {
+    // Restore action-bar as a sibling of create-grid at the end of the create pane
+    if (actionBar.parentElement !== paneCreate) {
+      // Insert before the backdrop / trigger (they're mobile-only anyway).
+      const backdrop = document.querySelector(".mobile-sheet-backdrop");
+      paneCreate.insertBefore(actionBar, backdrop || null);
+    }
+    // Clean up any mobile-only body classes
+    document.body.classList.remove("mobile-sheet-open");
+  }
+}
+
+function openMobileSheet() {
+  if (!_isMobileLayout()) return;
+  document.body.classList.add("mobile-sheet-open");
+}
+
+function closeMobileSheet() {
+  document.body.classList.remove("mobile-sheet-open");
+}
+
+function bindMobileSheet() {
+  document.getElementById("mobile-sheet-trigger")?.addEventListener("click", openMobileSheet);
+  document.getElementById("mobile-sheet-close")?.addEventListener("click", closeMobileSheet);
+  document.getElementById("mobile-sheet-backdrop")?.addEventListener("click", closeMobileSheet);
+  // Close on Escape when open
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && document.body.classList.contains("mobile-sheet-open")) {
+      closeMobileSheet();
+    }
+  });
+}
+
+// ---------- Modal touch swipe (mobile) ----------
+// Swipe left = next, swipe right = prev. Threshold ~ 60px horizontal, and
+// horizontal must dominate vertical to avoid conflicting with vertical scroll.
+function bindModalTouchSwipe() {
+  const modal = document.getElementById("result-modal");
+  if (!modal) return;
+  let startX = 0, startY = 0, tracking = false;
+  const THRESHOLD = 60;
+
+  modal.addEventListener("touchstart", (e) => {
+    if (modal.classList.contains("hidden")) return;
+    // Don't intercept swipes that begin on the action buttons
+    if (e.target.closest(".modal-actions, .modal-nav, .modal-close")) return;
+    const t = e.touches[0];
+    startX = t.clientX;
+    startY = t.clientY;
+    tracking = true;
+  }, { passive: true });
+
+  modal.addEventListener("touchend", (e) => {
+    if (!tracking) return;
+    tracking = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - startX;
+    const dy = t.clientY - startY;
+    if (Math.abs(dx) < THRESHOLD || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    modalNavigate(dx > 0 ? "prev" : "next");
+  }, { passive: true });
+}
+
+// ---------- Debounce helper ----------
+function _debounce(fn, ms) {
+  let t = null;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
 }

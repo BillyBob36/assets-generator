@@ -1,13 +1,22 @@
-"""Material presets for icon transformation via gpt-image-2.
+"""Material and drawing-style presets for icon transformation via GPT Image.
 
 Each material defines:
   - id, label, emoji, swatch (CSS gradient): UI metadata
-  - material_phrase: short concrete noun for "made of {phrase}"
-  - details: lighting + texture cues following gpt-image-2 prompt guide
+  - material_phrase + details: lighting and texture for embossed materials
+  - render_mode + style_reference: optional illustrated-style edit pipeline
 """
 from __future__ import annotations
 
 MATERIALS: dict[str, dict] = {
+    "childlike_sketch": {
+        "id": "childlike_sketch",
+        "label": "Petit croquis enfantin",
+        "emoji": "✏️",
+        "swatch": "linear-gradient(135deg,#ffffff 0%,#f2f2f2 100%)",
+        "description": "Feutre noir à main levée, contours irréguliers et quelques détails naïfs, sur fond transparent",
+        "render_mode": "black_ink",
+        "style_reference": "static/material-references/childlike_sketch.png",
+    },
     "gold": {
         "id": "gold",
         "label": "Or massif",
@@ -185,6 +194,33 @@ def build_prompt(material_id: str, icon_label: str = "") -> str:
     m = MATERIALS[material_id]
     label = (icon_label or "").replace("-", " ").replace("_", " ").strip()
     label_hint = f" (the icon broadly represents \"{label}\")" if label else ""
+
+    if m.get("render_mode") == "black_ink":
+        return (
+            "Redraw the subject of IMAGE 1 in the childlike BLACK felt-marker drawing style of IMAGE 2.\n"
+            f"IMAGE 1 is the CONTENT reference{label_hint}: keep its recognizable subject, orientation "
+            "and essential components. Its clean vector lines and exact proportions are NOT a style to copy. "
+            "Simplify secondary details and freely make the outline crooked, uneven and hand-drawn.\n"
+            "IMAGE 2 is ONLY the STYLE reference approved by the user: imitate its naive freehand character, "
+            "broad black marker, irregular pressure, wobbly contours, little kinks, overlaps and untidy joins. "
+            "Do NOT copy the subject, composition or subject-specific features from IMAGE 2 into the result.\n"
+            "Imagine an EIGHT-YEAR-OLD proudly sketching the subject with a thick chisel-tip BLACK felt marker. "
+            "Wrong but charming proportions, asymmetrical components, roughly drawn off-center inner features. "
+            "The edges of every shape visibly wobble, with little kinks and line overlaps at turns, "
+            "a few tiny transparent skips inside otherwise bold ink. Keep only essential inner features "
+            "and at most TWO short interior accent strokes. Maintain the relaxed roughness of a child's "
+            "notebook doodle, with very few details and broad soft strokes. It must look drawn by a child, "
+            "not an adult designer creating a polished children's-book vector illustration.\n"
+            "The childhood character is the PRIMARY style requirement. No tracing, no perfect Bezier curves, "
+            "no immaculate constant-width computer lines, no symmetry, no geometric logo treatment. "
+            "Center the complete subject, leave 12 percent empty margin, keep every mark inside the frame.\n"
+            "Only pure BLACK ink. Flat two-dimensional marks. No colors, no white paint, no shading, "
+            "no gradients, no hatching, no pencil, no 3D, no shadows, no text, no signature, no extra objects.\n"
+            "True transparent RGBA background: NO PAPER and no white backdrop. Everything outside and "
+            "INSIDE the outlined shapes must be alpha 0 except the actual black ink marks. Remove all "
+            "white from IMAGE 1. Do not fill hollow shapes with white. Do not depict a checkerboard. "
+            "Preserve the irregular ink edges and anti-aliasing."
+        )
 
     input_block = (
         f"INPUT: a black silhouette icon centered on a pure white background{label_hint}.\n"

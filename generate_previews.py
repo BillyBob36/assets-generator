@@ -65,6 +65,17 @@ def generate(m: dict, force: bool) -> tuple[str, Path | None, str | None]:
     if out.exists() and not force:
         return m["id"], out, "skipped (exists)"
 
+    if m.get("style_reference"):
+        # The approved drawing is the swatch for illustrated styles. A white
+        # preview makes black ink legible in the dark UI; exports stay transparent.
+        source = Path(__file__).resolve().parent / m["style_reference"]
+        image = Image.open(source).convert("RGBA")
+        image.thumbnail((224, 224), Image.Resampling.LANCZOS)
+        canvas = Image.new("RGB", (256, 256), "white")
+        canvas.paste(image, ((256-image.width)//2, (256-image.height)//2), image)
+        canvas.save(out, format="PNG", optimize=True)
+        return m["id"], out, None
+
     url = f"{ENDPOINT}/openai/deployments/{DEPLOYMENT}/images/generations?api-version={API_VERSION}"
     payload = {
         "prompt": build_prompt(m),

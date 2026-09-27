@@ -42,7 +42,7 @@ from dotenv import load_dotenv
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from PIL import Image
+from PIL import Image, ImageChops, ImageFilter, ImageOps
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -323,6 +323,14 @@ def _do_generation(job: dict) -> bytes:
         f"/images/edits?api-version={AZURE_API_VERSION}"
     )
     files = [("image", ("icon.png", img_bytes, "image/png"))]
+    material = MATERIALS[params["material_id"]]
+    if material.get("style_reference"):
+        reference = (BASE_DIR / material["style_reference"]).read_bytes()
+        # Azure's multi-image edit API: first image is content, second is style.
+        files = [
+            ("image[]", ("icon.png", img_bytes, "image/png")),
+            ("image[]", ("style-reference.png", reference, "image/png")),
+        ]
     data = {
         "prompt": prompt,
         "size": f"{gen_w}x{gen_h}",
@@ -343,10 +351,21 @@ def _do_generation(job: dict) -> bytes:
 
     # Resize to the user's target dimensions while preserving alpha.
     img = Image.open(io.BytesIO(raw)).convert("RGBA")
+    if material.get("render_mode") == "black_ink":
+        img = _black_ink_only(img)
     img = img.resize((params["width"], params["height"]), Image.LANCZOS)
     out = io.BytesIO()
     img.save(out, format="PNG", optimize=True)
     return out.getvalue()
+
+
+def _black_ink_only(image: Image.Image) -> Image.Image:
+    """Keep marker opacity and antialiasing, remove white fill and faint stray noise."""
+    alpha = ImageChops.multiply(image.getchannel("A"), ImageOps.invert(ImageOps.grayscale(image)))
+    nearby_ink = alpha.point(lambda a: 255 if a >= 32 else 0).filter(ImageFilter.MaxFilter(9))
+    output = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    output.putalpha(ImageChops.multiply(alpha, nearby_ink))
+    return output
 
 
 def _azure_post_with_retry(url: str, headers: dict, data: dict, files: list,

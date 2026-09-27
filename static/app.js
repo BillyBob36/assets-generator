@@ -29,6 +29,21 @@ const state = {
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
+// Load Iconify thumbnails through our server, as we already do for generation.
+// Also handles external URLs saved in older gallery jobs; uploads stay unchanged.
+function iconThumbnailUrl(source) {
+  try {
+    const url = new URL(source, window.location.origin);
+    const match = url.pathname.match(/^\/([a-z0-9-]+)\/([a-z0-9_-]+)\.svg$/i);
+    if (url.hostname === "api.iconify.design" && match) {
+      return `/api/icon-svg?prefix=${encodeURIComponent(match[1])}&name=${encodeURIComponent(match[2])}`;
+    }
+  } catch (_) {
+    // Preserve non-URL inputs rather than breaking the rest of the gallery.
+  }
+  return source;
+}
+
 // ---------- Init ----------
 window.addEventListener("DOMContentLoaded", async () => {
   // Gate: if auth is enabled and we aren't authenticated, bounce to login.
@@ -282,7 +297,7 @@ function renderIcons(icons) {
     card.className = "icon-card";
     card.dataset.iconId = ic.id;
     card.title = ic.id;
-    card.innerHTML = `<img loading="lazy" src="${ic.svg_url}" alt="${ic.name}">`;
+    card.innerHTML = `<img loading="lazy" src="${iconThumbnailUrl(ic.svg_url)}" alt="${ic.name}">`;
     card.addEventListener("click", () => selectIcon(ic));
     grid.appendChild(card);
   }
@@ -298,7 +313,7 @@ function selectIcon(ic) {
   // Iconify icons are monochrome black SVGs → invert filter to display on dark UI.
   // Custom uploads keep their original colors → no filter.
   const cls = ic.prefix === "custom" ? "" : "icon-thumb";
-  thumb.innerHTML = `<img src="${ic.svg_url}" alt="${ic.name}" class="${cls}">`;
+  thumb.innerHTML = `<img src="${iconThumbnailUrl(ic.svg_url)}" alt="${ic.name}" class="${cls}">`;
   value.textContent = ic.prefix === "custom" ? `${ic.name} (upload)` : ic.name;
   value.classList.remove("empty");
   updateGenerateButton();
@@ -573,7 +588,7 @@ function renderGalleryCard(j) {
     }
     if (j.status === "in_progress") {
       return `
-        <img src="${j.icon_svg_url}" class="source-icon" alt="">
+        <img src="${iconThumbnailUrl(j.icon_svg_url)}" class="source-icon" alt="">
         <div class="thumb-state">
           <div class="spinner"></div>
           <div>Génération… ${elapsed}</div>
@@ -581,7 +596,7 @@ function renderGalleryCard(j) {
     }
     if (j.status === "queued") {
       return `
-        <img src="${j.icon_svg_url}" class="source-icon" alt="">
+        <img src="${iconThumbnailUrl(j.icon_svg_url)}" class="source-icon" alt="">
         <div class="thumb-state">
           <div style="font-size:18px;opacity:.7">⏳</div>
           <div>En attente</div>
@@ -589,7 +604,7 @@ function renderGalleryCard(j) {
     }
     if (j.status === "failed" || j.status === "cancelled") {
       return `
-        <img src="${j.icon_svg_url}" class="source-icon" alt="">
+        <img src="${iconThumbnailUrl(j.icon_svg_url)}" class="source-icon" alt="">
         <div class="thumb-state">
           <div style="font-size:18px;color:var(--danger)">${j.status === "failed" ? "✕" : "⊘"}</div>
           <div>${j.status === "failed" ? "Échec" : "Annulé"}</div>
@@ -824,7 +839,7 @@ function bindMisc() {
       svg_url: modalJob.icon_svg_url,
     };
     // visually reflect icon
-    $("#sum-icon").innerHTML = `<img src="${modalJob.icon_svg_url}" class="icon-thumb" alt="">`;
+    $("#sum-icon").innerHTML = `<img src="${iconThumbnailUrl(modalJob.icon_svg_url)}" class="icon-thumb" alt="">`;
     $("#sum-icon-value").textContent = parts[1] || "icon";
     // material
     const mid = modalJob.params.material_id;

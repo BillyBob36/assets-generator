@@ -31,7 +31,9 @@ import urllib.parse
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
+from threading import BoundedSemaphore
 from typing import Any
 
 import requests
@@ -79,6 +81,25 @@ else:
     print("[auth] DISABLED (no GOOGLE_CLIENT_ID/SECRET/ALLOWED_EMAILS set) — app is open", file=sys.stderr)
 
 ICONIFY_BASE = "https://api.iconify.design"
+ICONIFY_SERVERS = (ICONIFY_BASE, "https://api.simplesvg.com", "https://api.unisvg.com")
+ICONIFY_REQUESTS = BoundedSemaphore(4)
+
+
+@lru_cache(maxsize=2048)
+def _fetch_icon_svg(prefix: str, name: str) -> str:
+    # Only successful SVGs are cached. Bound upstream concurrency and try
+    # Iconify's redundant hosts if one is unavailable or rate-limited.
+    with ICONIFY_REQUESTS:
+        for server in ICONIFY_SERVERS:
+            try:
+                resp = requests.get(f"{server}/{prefix}/{name}.svg", timeout=10)
+                resp.raise_for_status()
+                if "<svg" not in resp.text:
+                    continue
+                return resp.text
+            except requests.RequestException:
+                continue
+    raise HTTPException(status_code=502, detail="Iconify temporarily unavailable; please retry")
 
 # gpt-image-1.5 accepts these square/landscape/portrait sizes. We always generate
 # at the closest matching size to the target ratio, then resize to user pixels.
@@ -533,12 +554,8 @@ def _safe_ident(s: str) -> bool:
 def get_icon_svg(prefix: str, name: str):
     if not (_safe_ident(prefix) and _safe_ident(name)):
         raise HTTPException(status_code=400, detail="Invalid icon identifier")
-    try:
-        resp = requests.get(f"{ICONIFY_BASE}/{prefix}/{name}.svg", timeout=10)
-        resp.raise_for_status()
-    except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"Iconify svg failed: {e}")
-    return Response(content=resp.text, media_type="image/svg+xml")
+    return Response(content=_fetch_icon_svg(prefix, name), media_type="image/svg+xml",
+                    headers={"Cache-Control": "private, max-age=86400"})
 
 
 # ---------------- Job endpoints ----------------

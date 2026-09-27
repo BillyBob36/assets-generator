@@ -23,6 +23,7 @@ import base64
 import io
 import json
 import os
+import re
 import secrets
 import shutil
 import sys
@@ -33,12 +34,12 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from threading import BoundedSemaphore
+from threading import BoundedSemaphore, Lock
 from typing import Any
 
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -173,6 +174,8 @@ GENERATION_SIZES = {
 STORAGE_DIR = Path(os.environ.get("STORAGE_DIR", str(BASE_DIR / "data")))
 JOBS_DIR = STORAGE_DIR / "jobs"
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
+EXPORT_COLORS_PATH = STORAGE_DIR / "export-colors.json"
+EXPORT_COLORS_LOCK = Lock()
 
 JOBS: dict[str, dict[str, Any]] = {}
 job_queue: asyncio.Queue[str] = asyncio.Queue()
@@ -545,6 +548,50 @@ app.add_middleware(
 
 
 # ---------------- Read-only endpoints ----------------
+def _normalize_export_color(color: str) -> str:
+    match = re.fullmatch(r"#?([0-9a-fA-F]{6})", color.strip())
+    if not match:
+        raise HTTPException(status_code=400, detail="Use a color in #RRGGBB format")
+    return "#" + match[1].upper()
+
+
+def _read_export_colors() -> list[str]:
+    try:
+        stored = json.loads(EXPORT_COLORS_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+    colors = []
+    if not isinstance(stored, list):
+        return colors
+    for value in stored:
+        if not isinstance(value, str):
+            continue
+        try:
+            color = _normalize_export_color(value)
+        except HTTPException:
+            continue
+        if color not in colors:
+            colors.append(color)
+    return colors[:10]
+
+
+@app.get("/api/export-colors")
+def get_export_colors():
+    return {"colors": _read_export_colors()}
+
+
+@app.post("/api/export-colors")
+def remember_export_color(color: str = Body(embed=True)):
+    color = _normalize_export_color(color)
+    with EXPORT_COLORS_LOCK:
+        colors = [color] + [c for c in _read_export_colors() if c != color]
+        colors = colors[:10]
+        temporary = EXPORT_COLORS_PATH.with_suffix(".tmp")
+        temporary.write_text(json.dumps(colors), encoding="utf-8")
+        temporary.replace(EXPORT_COLORS_PATH)
+    return {"colors": colors}
+
+
 @app.get("/api/config")
 def get_config():
     return {
@@ -709,7 +756,7 @@ def _crop_to_content(png_bytes: bytes, mode: str) -> bytes:
         canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
         ox = (side - cropped.width) // 2
         oy = (side - cropped.height) // 2
-        canvas.paste(cropped, (ox, oy), cropped)
+        canvas.paste(cropped, (ox, oy))
         cropped = canvas
     out = io.BytesIO()
     cropped.save(out, format="PNG", optimize=True)
@@ -717,7 +764,8 @@ def _crop_to_content(png_bytes: bytes, mode: str) -> bytes:
 
 
 @app.get("/api/jobs/{job_id}/result.png")
-def get_job_result(job_id: str, crop: str | None = None):
+def get_job_result(job_id: str, crop: str | None = None, background: str | None = None):
+    color = _normalize_export_color(background) if background and background != "transparent" else None
     j = JOBS.get(job_id)
     if not j:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -733,6 +781,16 @@ def get_job_result(job_id: str, crop: str | None = None):
         suffix = f"-{crop}"
     elif crop is not None:
         raise HTTPException(status_code=400, detail="crop must be 'square' or 'rectangle'")
+    # Crop on the original alpha first; adding a background before cropping
+    # would incorrectly make the whole canvas count as opaque content.
+    if color:
+        foreground = Image.open(io.BytesIO(content)).convert("RGBA")
+        canvas = Image.new("RGBA", foreground.size, color)
+        canvas.alpha_composite(foreground)
+        output = io.BytesIO()
+        canvas.convert("RGB").save(output, format="PNG", optimize=True)
+        content = output.getvalue()
+        suffix += "-bg-" + color[1:]
     base = j["params"]["icon_label"] or "asset"
     return Response(
         content=content,

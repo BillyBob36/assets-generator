@@ -52,13 +52,14 @@ window.addEventListener("DOMContentLoaded", async () => {
   if (!me) return;  // redirect happened
   renderUser(me);
 
-  await Promise.all([loadConfig(), loadMaterials(), refreshJobs()]);
+  await Promise.all([loadConfig(), loadMaterials(), refreshJobs(), loadExportColors()]);
   bindTabs();
   bindSearch();
   bindControls();
   bindGenerate();
   bindGalleryFilters();
   bindMisc();
+  bindExportBackground();
   bindAuth();
   bindMobileSheet();
   applyMobileLayout();
@@ -637,7 +638,7 @@ function renderGalleryCard(j) {
   if (j.status === "succeeded") {
     const dl = document.createElement("button");
     dl.className = "btn-icon flex";
-    dl.title = "Télécharger l'original";
+    dl.title = "Télécharger le PNG avec le fond choisi";
     dl.innerHTML = "⬇ Télécharger";
     dl.addEventListener("click", (e) => { e.stopPropagation(); downloadJob(j); });
     actions.appendChild(dl);
@@ -751,17 +752,140 @@ async function clearCompleted() {
 }
 
 function downloadJob(j, cropMode = null) {
+  if (!$("#result-modal").classList.contains("hidden") && !commitHexColor()) return;
   const suffix = cropMode ? `-${cropMode}` : "";
-  const base = `${j.params.icon_label || "asset"}-${j.params.material_id}-${j.params.width}x${j.params.height}${suffix}`;
+  const backgroundSuffix = exportBackground ? `-bg-${exportBackground.slice(1)}` : "";
+  const base = `${j.params.icon_label || "asset"}-${j.params.material_id}-${j.params.width}x${j.params.height}${suffix}${backgroundSuffix}`;
   const cropParam = cropMode ? `&crop=${cropMode}` : "";
+  const backgroundParam = exportBackground ? `&background=${encodeURIComponent(exportBackground)}` : "";
+  if (exportBackground) saveExportColor(exportBackground);
   const a = document.createElement("a");
-  a.href = `/api/jobs/${j.id}/result.png?t=${encodeURIComponent(j.finished_at || "")}${cropParam}`;
+  a.href = `/api/jobs/${j.id}/result.png?t=${encodeURIComponent(j.finished_at || "")}${cropParam}${backgroundParam}`;
   a.download = `${base}.png`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   const label = cropMode === "square" ? "carré" : cropMode === "rectangle" ? "rectangle" : "original";
   toast(`Téléchargement ${label} : ${base}.png`, "success");
+}
+
+// ---------- Export background ----------
+const EXPORT_PALETTE = [
+  ["#FFFFFF", "Blanc"], ["#F5F0E8", "Ivoire"], ["#CBD5E1", "Gris clair"],
+  ["#17171C", "Anthracite"], ["#000000", "Noir"], ["#2563EB", "Bleu"],
+  ["#A855F7", "Violet"], ["#F472B6", "Rose"], ["#10B981", "Vert"], ["#FBBF24", "Jaune"],
+];
+let exportBackground = null;
+let recentExportColors = [];
+let exportColorSaveQueue = Promise.resolve();
+
+function normalizeHexColor(value) {
+  let hex = value.trim().replace(/^#/, "");
+  if (/^[0-9a-f]{3}$/i.test(hex)) hex = [...hex].map(c => c + c).join("");
+  return /^[0-9a-f]{6}$/i.test(hex) ? `#${hex.toUpperCase()}` : null;
+}
+
+async function loadExportColors() {
+  try {
+    const response = await fetch("/api/export-colors", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    recentExportColors = data.colors || [];
+  } catch (_) {
+    toast("Impossible de charger les dernières teintes. Tu peux toujours choisir un fond.", "error");
+  }
+}
+
+function saveExportColor(color) {
+  recentExportColors = [color, ...recentExportColors.filter(c => c !== color)].slice(0, 10);
+  renderBackgroundSwatches();
+  // Keep rapid choices ordered when persisting the shared palette to the server.
+  exportColorSaveQueue = exportColorSaveQueue.then(async () => {
+    const response = await fetch("/api/export-colors", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ color }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  }).catch(() => toast("Teinte non enregistrée. Le fond reste disponible pour cet export.", "error"));
+}
+
+function renderBackgroundSwatches() {
+  const fill = (selector, colors) => {
+    const container = $(selector);
+    container.replaceChildren();
+    for (const [color, label] of colors) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "background-swatch";
+      button.style.backgroundColor = color;
+      button.title = `${label} ${color}`;
+      button.setAttribute("aria-label", `${label} ${color}`);
+      button.setAttribute("aria-pressed", String(exportBackground === color));
+      button.addEventListener("click", () => setExportBackground(color, true));
+      container.appendChild(button);
+    }
+  };
+  fill("#background-palette", EXPORT_PALETTE);
+  fill("#background-recent", recentExportColors.map(c => [c, "Réutiliser"]));
+  $("#background-recent-empty").hidden = recentExportColors.length > 0;
+}
+
+function setExportBackground(color, remember = false, syncInput = true) {
+  exportBackground = color;
+  document.documentElement.style.setProperty("--export-background", color || "transparent");
+  document.body.classList.toggle("has-export-background", !!color);
+  $("#background-transparent").setAttribute("aria-pressed", String(!color));
+  $("#background-hex").removeAttribute("aria-invalid");
+  $("#background-color-error").textContent = "";
+  if (color && syncInput) {
+    $("#background-picker").value = color.toLowerCase();
+    $("#background-hex").value = color;
+  }
+  $("#background-export-summary").textContent = color
+    ? `Fond ${color} intégré aux PNG téléchargés.`
+    : "Export PNG avec fond transparent.";
+  renderBackgroundSwatches();
+  if (color && remember) saveExportColor(color);
+}
+
+function commitHexColor() {
+  const input = $("#background-hex");
+  // Transparent is an explicit choice; its inactive hex field must not override it.
+  if (!exportBackground && input.dataset.edited !== "true") return true;
+  const color = normalizeHexColor(input.value);
+  if (!color) {
+    input.setAttribute("aria-invalid", "true");
+    $("#background-color-error").textContent = "Saisis un code valide, par exemple #2563EB.";
+    return false;
+  }
+  const edited = input.dataset.edited === "true";
+  input.dataset.edited = "false";
+  setExportBackground(color, edited);
+  return true;
+}
+
+function bindExportBackground() {
+  renderBackgroundSwatches();
+  $("#background-transparent").addEventListener("click", () => {
+    $("#background-hex").dataset.edited = "false";
+    setExportBackground(null);
+  });
+  $("#background-picker").addEventListener("input", e => {
+    $("#background-hex").dataset.edited = "false";
+    setExportBackground(normalizeHexColor(e.target.value));
+  });
+  $("#background-picker").addEventListener("change", e => setExportBackground(normalizeHexColor(e.target.value), true));
+  $("#background-hex").addEventListener("input", e => {
+    e.target.dataset.edited = "true";
+    const color = normalizeHexColor(e.target.value);
+    if (color) {
+      setExportBackground(color, false, false);
+      $("#background-picker").value = color.toLowerCase();
+    }
+  });
+  $("#background-hex").addEventListener("change", commitHexColor);
+  $("#background-hex").addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); commitHexColor(); }
+  });
 }
 
 // ---------- Modal ----------
@@ -802,6 +926,7 @@ function openModal(j) {
   if (prevBtn) prevBtn.disabled = !nav.canPrev;
   if (nextBtn) nextBtn.disabled = !nav.canNext;
   $("#result-modal").classList.remove("hidden");
+  renderBackgroundSwatches();
 }
 
 function modalNavigate(direction) {
@@ -876,7 +1001,7 @@ function bindMisc() {
     if (e.key === "2" && e.altKey) switchTab("gallery");
     // Arrow keys navigate within the modal (only when it's open)
     const modalOpen = !$("#result-modal").classList.contains("hidden");
-    if (modalOpen && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+    if (modalOpen && !e.target.closest("input, textarea, select") && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
       e.preventDefault();
       modalNavigate(e.key === "ArrowLeft" ? "prev" : "next");
     }

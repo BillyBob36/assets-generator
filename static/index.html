@@ -191,7 +191,7 @@
 <!-- =========================== MODAL =========================== -->
 <div class="modal hidden" id="result-modal">
   <div class="modal-backdrop"></div>
-  <div class="modal-card">
+  <div class="modal-card export-layout">
     <button class="modal-close" id="modal-close" aria-label="Fermer">✕</button>
     <button class="modal-nav modal-nav-prev" id="modal-prev" aria-label="Image précédente" title="← image précédente">‹</button>
     <button class="modal-nav modal-nav-next" id="modal-next" aria-label="Image suivante" title="→ image suivante">›</button>
@@ -202,8 +202,26 @@
       <div class="modal-title" id="modal-title"></div>
       <div class="modal-sub" id="modal-sub"></div>
     </div>
+    <section class="export-background" aria-labelledby="export-background-title">
+      <h3 id="export-background-title">Fond du PNG</h3>
+      <button class="background-transparent" id="background-transparent" aria-pressed="true">
+        <span class="transparent-swatch" aria-hidden="true"></span> Transparent
+      </button>
+      <div class="background-label" id="background-palette-label">Palette</div>
+      <div class="background-swatches" id="background-palette" role="group" aria-labelledby="background-palette-label"></div>
+      <label class="background-label" for="background-hex">Couleur personnalisée</label>
+      <div class="background-custom">
+        <input type="color" id="background-picker" value="#ffffff" aria-label="Choisir une couleur de fond">
+        <input type="text" id="background-hex" value="#FFFFFF" maxlength="7" spellcheck="false" autocomplete="off" aria-label="Code couleur hexadécimal" aria-describedby="background-color-error">
+      </div>
+      <div id="background-color-error" class="background-error" role="status"></div>
+      <div class="background-label" id="background-recent-label">10 dernières teintes</div>
+      <div class="background-swatches" id="background-recent" role="group" aria-labelledby="background-recent-label"></div>
+      <p class="background-note" id="background-recent-empty">Les couleurs choisies seront conservées ici.</p>
+      <p class="background-note" id="background-export-summary" aria-live="polite">Export PNG avec fond transparent.</p>
+    </section>
     <div class="modal-actions">
-      <button class="btn-secondary" id="modal-download" title="PNG original généré">⬇ Original</button>
+      <button class="btn-secondary" id="modal-download" title="Télécharger le PNG avec le fond choisi, aux dimensions d’origine">⬇ Télécharger PNG</button>
       <button class="btn-secondary" id="modal-crop-square" title="Crop carré, côté = plus grande dimension (rien perdu)">▢ Carré</button>
       <button class="btn-secondary" id="modal-crop-rect" title="Crop rectangulaire tight sur le contenu">▭ Rectangle</button>
       <button class="btn-secondary" id="modal-redo">↻ Régénérer</button>

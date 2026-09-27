@@ -85,11 +85,64 @@ ICONIFY_SERVERS = (ICONIFY_BASE, "https://api.simplesvg.com", "https://api.unisv
 ICONIFY_REQUESTS = BoundedSemaphore(4)
 
 
+@lru_cache(maxsize=32)
+def _icon_collection(prefix: str) -> dict:
+    # Published Iconify datasets provide a fallback independent of the SVG API.
+    resp = requests.get(
+        f"https://cdn.jsdelivr.net/npm/@iconify-json/{prefix}/icons.json", timeout=20)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _collection_svg(prefix: str, name: str) -> str:
+    collection = _icon_collection(prefix)
+    chain = []
+    seen = set()
+    while name not in collection["icons"]:
+        if name in seen:
+            raise ValueError("Circular icon alias")
+        seen.add(name)
+        alias = collection.get("aliases", {})[name]
+        chain.append(alias)
+        name = alias["parent"]
+    icon = dict(collection["icons"][name])
+    for alias in reversed(chain):
+        for key, value in alias.items():
+            if key in ("hFlip", "vFlip"):
+                icon[key] = bool(icon.get(key, False)) != bool(value)
+            elif key == "rotate":
+                icon[key] = (icon.get(key, 0) + value) % 4
+            elif key != "parent":
+                icon[key] = value
+    width = int(icon.get("width", collection.get("width", 16)))
+    height = int(icon.get("height", collection.get("height", 16)))
+    left = int(icon.get("left", collection.get("left", 0)))
+    top = int(icon.get("top", collection.get("top", 0)))
+    body = icon["body"]
+    if left or top:
+        body = f'<g transform="translate({-left} {-top})">{body}</g>'
+    if icon.get("hFlip"):
+        body = f'<g transform="translate({width} 0) scale(-1 1)">{body}</g>'
+    if icon.get("vFlip"):
+        body = f'<g transform="translate(0 {height}) scale(1 -1)">{body}</g>'
+    rotation = int(icon.get("rotate", 0)) % 4
+    if rotation:
+        tx, ty = {1: (height, 0), 2: (width, height), 3: (0, width)}[rotation]
+        body = f'<g transform="translate({tx} {ty}) rotate({rotation * 90})">{body}</g>'
+        if rotation % 2:
+            width, height = height, width
+    return f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">{body}</svg>'
+
+
 @lru_cache(maxsize=2048)
 def _fetch_icon_svg(prefix: str, name: str) -> str:
     # Only successful SVGs are cached. Bound upstream concurrency and try
     # Iconify's redundant hosts if one is unavailable or rate-limited.
     with ICONIFY_REQUESTS:
+        try:
+            return _collection_svg(prefix, name)
+        except (requests.RequestException, KeyError, ValueError):
+            pass
         for server in ICONIFY_SERVERS:
             try:
                 resp = requests.get(f"{server}/{prefix}/{name}.svg", timeout=10)

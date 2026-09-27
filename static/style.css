@@ -1552,9 +1552,9 @@ body {
 .background-note { margin: 8px 0 0; color: var(--text-mute); font-size: 11px; line-height: 1.5; }
 .background-error { color: #fca5a5; font-size: 11px; margin-top: 5px; }
 .background-error:empty { display: none; }
-.has-export-background .gal-thumb { background: var(--export-background); }
-.has-export-background .export-layout .modal-preview { background: var(--bg-soft); }
-.has-export-background .export-layout .modal-preview img { background: var(--export-background); }
+.gal-thumb.has-export-background { background: var(--export-background); }
+.export-layout .modal-preview.has-export-background { background: var(--bg-soft); }
+.export-layout .modal-preview.has-export-background img { background: var(--export-background); }
 @media (max-width: 720px) {
   .export-layout.modal-card {
     display: flex;

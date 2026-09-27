@@ -24,7 +24,8 @@ class ExportTests(unittest.TestCase):
         self.original = folder / "result.png"
         image.save(self.original)
         self.original_bytes = self.original.read_bytes()
-        job = {"status": "succeeded", "params": {"icon_label": "test", "material_id": "gold"}}
+        job = {"id": "example", "created_at": "2026-09-27T00:00:00Z", "status": "succeeded",
+               "params": {"icon_label": "test", "material_id": "gold"}}
         for name, value in {
             "AUTH_ENABLED": False,
             "JOBS": {"example": job},
@@ -84,6 +85,32 @@ class ExportTests(unittest.TestCase):
         with patch.object(app, "AUTH_ENABLED", True):
             self.assertEqual(self.client.get("/api/export-colors").status_code, 401)
             self.assertEqual(self.client.post("/api/export-colors", json={"color": "#FFFFFF"}).status_code, 401)
+
+    def test_background_is_individual_and_survives_reload(self):
+        app.JOBS["other"] = {**app.JOBS["example"], "id": "other"}
+        for job_id, color in [("example", "#2563eb"), ("other", "#10b981")]:
+            response = self.client.patch(f"/api/jobs/{job_id}/background", json={"background": color})
+            self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.client.get("/api/jobs/example").json()["export_background"], "#2563EB")
+        self.assertEqual(self.client.get("/api/jobs/other").json()["export_background"], "#10B981")
+        app.JOBS.clear()
+        app._rehydrate_jobs()
+        self.assertEqual(app.JOBS["example"]["export_background"], "#2563EB")
+        self.assertEqual(app.JOBS["other"]["export_background"], "#10B981")
+        self.client.patch("/api/jobs/example/background", json={"background": None})
+        self.assertIsNone(app.JOBS["example"]["export_background"])
+        self.assertEqual(app.JOBS["other"]["export_background"], "#10B981")
+        stored = json.loads((self.original.parent / "meta.json").read_text())
+        self.assertIsNone(stored["export_background"])
+        self.assertEqual(self.original.read_bytes(), self.original_bytes)
+
+    def test_background_updates_validate_color_job_and_auth(self):
+        self.assertEqual(self.client.patch("/api/jobs/example/background", json={"background": "red"}).status_code, 400)
+        self.assertEqual(self.client.patch("/api/jobs/missing/background", json={"background": None}).status_code, 404)
+        app.JOBS["example"]["status"] = "in_progress"
+        self.assertEqual(self.client.patch("/api/jobs/example/background", json={"background": None}).status_code, 409)
+        with patch.object(app, "AUTH_ENABLED", True):
+            self.assertEqual(self.client.patch("/api/jobs/example/background", json={"background": None}).status_code, 401)
 
 
 if __name__ == "__main__":

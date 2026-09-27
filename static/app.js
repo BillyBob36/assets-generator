@@ -633,6 +633,7 @@ function renderGalleryCard(j) {
     </div>
     <div class="gal-actions"></div>
   `;
+  applyExportBackground(card.querySelector(".gal-thumb"), jobExportBackground(j));
   const actions = card.querySelector(".gal-actions");
 
   if (j.status === "succeeded") {
@@ -752,13 +753,14 @@ async function clearCompleted() {
 }
 
 function downloadJob(j, cropMode = null) {
-  if (!$("#result-modal").classList.contains("hidden") && !commitHexColor()) return;
+  if (modalJob?.id === j.id && !commitHexColor()) return;
+  const background = jobExportBackground(j);
   const suffix = cropMode ? `-${cropMode}` : "";
-  const backgroundSuffix = exportBackground ? `-bg-${exportBackground.slice(1)}` : "";
+  const backgroundSuffix = background ? `-bg-${background.slice(1)}` : "";
   const base = `${j.params.icon_label || "asset"}-${j.params.material_id}-${j.params.width}x${j.params.height}${suffix}${backgroundSuffix}`;
   const cropParam = cropMode ? `&crop=${cropMode}` : "";
-  const backgroundParam = exportBackground ? `&background=${encodeURIComponent(exportBackground)}` : "";
-  if (exportBackground) saveExportColor(exportBackground);
+  const backgroundParam = background ? `&background=${encodeURIComponent(background)}` : "";
+  if (background) saveExportColor(background);
   const a = document.createElement("a");
   a.href = `/api/jobs/${j.id}/result.png?t=${encodeURIComponent(j.finished_at || "")}${cropParam}${backgroundParam}`;
   a.download = `${base}.png`;
@@ -776,8 +778,37 @@ const EXPORT_PALETTE = [
   ["#A855F7", "Violet"], ["#F472B6", "Rose"], ["#10B981", "Vert"], ["#FBBF24", "Jaune"],
 ];
 let exportBackground = null;
+const jobBackgroundOverrides = new Map();
+const backgroundSaveTimers = new Map();
+let backgroundSaveQueue = Promise.resolve();
 let recentExportColors = [];
 let exportColorSaveQueue = Promise.resolve();
+
+function jobExportBackground(job) {
+  return jobBackgroundOverrides.has(job.id)
+    ? jobBackgroundOverrides.get(job.id)
+    : job.export_background || null;
+}
+
+function applyExportBackground(element, color) {
+  if (!element) return;
+  element.style.setProperty("--export-background", color || "transparent");
+  element.classList.toggle("has-export-background", !!color);
+}
+
+function scheduleJobBackgroundSave(jobId, background) {
+  clearTimeout(backgroundSaveTimers.get(jobId));
+  backgroundSaveTimers.set(jobId, setTimeout(() => {
+    backgroundSaveTimers.delete(jobId);
+    backgroundSaveQueue = backgroundSaveQueue.then(async () => {
+      const response = await fetch(`/api/jobs/${jobId}/background`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ background }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    }).catch(() => toast("Fond non enregistré pour ce picto. Réessaie de choisir sa couleur.", "error"));
+  }, 250));
+}
 
 function normalizeHexColor(value) {
   let hex = value.trim().replace(/^#/, "");
@@ -829,19 +860,23 @@ function renderBackgroundSwatches() {
   $("#background-recent-empty").hidden = recentExportColors.length > 0;
 }
 
-function setExportBackground(color, remember = false, syncInput = true) {
+function setExportBackground(color, remember = false, syncInput = true, save = true) {
   exportBackground = color;
-  document.documentElement.style.setProperty("--export-background", color || "transparent");
-  document.body.classList.toggle("has-export-background", !!color);
+  applyExportBackground($(".modal-preview"), color);
+  if (modalJob && save) {
+    jobBackgroundOverrides.set(modalJob.id, color);
+    applyExportBackground($(`.gal-card[data-job-id="${CSS.escape(modalJob.id)}"] .gal-thumb`), color);
+    scheduleJobBackgroundSave(modalJob.id, color);
+  }
   $("#background-transparent").setAttribute("aria-pressed", String(!color));
   $("#background-hex").removeAttribute("aria-invalid");
   $("#background-color-error").textContent = "";
-  if (color && syncInput) {
-    $("#background-picker").value = color.toLowerCase();
-    $("#background-hex").value = color;
+  if (syncInput) {
+    $("#background-picker").value = (color || "#FFFFFF").toLowerCase();
+    $("#background-hex").value = color || "#FFFFFF";
   }
   $("#background-export-summary").textContent = color
-    ? `Fond ${color} intégré aux PNG téléchargés.`
+    ? `Fond ${color} pour les PNG de ce picto.`
     : "Export PNG avec fond transparent.";
   renderBackgroundSwatches();
   if (color && remember) saveExportColor(color);
@@ -914,6 +949,8 @@ function _modalNavInfo() {
 
 function openModal(j) {
   modalJob = j;
+  $("#background-hex").dataset.edited = "false";
+  setExportBackground(jobExportBackground(j), false, true, false);
   $("#modal-img").src = `/api/jobs/${j.id}/result.png?t=${encodeURIComponent(j.finished_at || "")}`;
   $("#modal-title").textContent = `${j.params.icon_label || "icon"} · ${j.params.material_label}`;
   const elapsedStr = j.elapsed_ms ? `${(j.elapsed_ms/1000).toFixed(1)}s` : "—";

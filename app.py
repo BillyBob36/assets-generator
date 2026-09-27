@@ -43,6 +43,7 @@ from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFil
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
+from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
 from materials import MATERIALS, build_prompt
@@ -246,6 +247,7 @@ def job_summary(j: dict) -> dict:
         "error": j.get("error"),
         "has_result": bool(j.get("has_result")),
         "elapsed_ms": j.get("elapsed_ms"),
+        "export_background": j.get("export_background"),
     }
 
 
@@ -800,6 +802,24 @@ def get_job_result(job_id: str, crop: str | None = None, background: str | None 
             "Cache-Control": "no-store",
         },
     )
+
+
+class JobBackgroundUpdate(BaseModel):
+    background: str | None
+
+
+@app.patch("/api/jobs/{job_id}/background")
+def set_job_background(job_id: str, update: JobBackgroundUpdate):
+    color = _normalize_export_color(update.background) if update.background is not None else None
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["status"] != "succeeded":
+        raise HTTPException(status_code=409, detail="Job not ready")
+    updated = {**job, "export_background": color}
+    _save_meta(updated)
+    job["export_background"] = color
+    return {"background": color}
 
 
 @app.get("/api/jobs/{job_id}/input.png")

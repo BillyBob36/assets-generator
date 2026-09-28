@@ -228,29 +228,40 @@ function bindSearch() {
 }
 
 async function handleCustomUpload(file) {
-  // 8 MB cap — matches the backend's /api/jobs limit
-  if (file.size > 8 * 1024 * 1024) {
-    toast("Fichier trop gros (max 8 MB)", "error");
+  // Decode locally, then keep only the resolution useful to the image model.
+  if (file.size > 40 * 1024 * 1024) {
+    toast("Fichier trop volumineux (maximum 40 Mo)", "error");
     return;
   }
   const rawName = file.name.replace(/\.[^.]+$/, "").slice(0, 60);
   const safeName = rawName.replace(/[^a-zA-Z0-9-_]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "custom";
   try {
-    const dataUrl = await new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(r.result);
-      r.onerror = () => reject(new Error("FileReader error"));
-      r.readAsDataURL(file);
-    });
+    const url = URL.createObjectURL(file);
+    let img;
+    try { img = await loadImage(url); }
+    finally { URL.revokeObjectURL(url); }
+    const scale = Math.min(1, 1536 / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const customBlob = await new Promise((resolve, reject) => canvas.toBlob(
+      b => b ? resolve(b) : reject(new Error("Impossible de préparer cette image")), "image/png"));
+    const dataUrl = canvas.toDataURL("image/png");
     const customIcon = {
       id: `custom:${safeName}`,
       prefix: "custom",
       name: safeName,
       svg_url: dataUrl,        // used for thumbnail and to load into <img> when rasterising
       customDataUrl: dataUrl,
+      customBlob,
     };
     selectIcon(customIcon);
-    toast(`Icône uploadée : ${file.name}`, "info");
+    toast(scale < 1
+      ? `Image importée et adaptée à ${canvas.width} × ${canvas.height} px`
+      : `Image importée : ${file.name}`, "info");
   } catch (err) {
     toast(`Erreur d'upload : ${err.message}`, "error");
   }
@@ -403,7 +414,19 @@ async function enqueueJob() {
     form.append("quality", state.quality);
     form.append("icon_id", state.selectedIcon.id);
     form.append("icon_label", state.selectedIcon.name);
-    form.append("icon_svg_url", state.selectedIcon.svg_url);
+    if (state.selectedIcon.prefix === "custom") {
+      // Never put a base64 image in a text field: multipart text parts are
+      // limited to 1 MB. Keep the source as a binary file for previews/re-runs.
+      let source = state.selectedIcon.customBlob;
+      if (!source) {
+        const response = await fetch(state.selectedIcon.customDataUrl || state.selectedIcon.svg_url);
+        if (!response.ok) throw new Error("Impossible de récupérer l’image source");
+        source = await response.blob();
+      }
+      form.append("source_image", source, "source.png");
+    } else {
+      form.append("icon_svg_url", state.selectedIcon.svg_url);
+    }
 
     const r = await fetch("/api/jobs", { method: "POST", body: form });
     if (!r.ok) {

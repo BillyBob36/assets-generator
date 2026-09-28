@@ -45,18 +45,22 @@ class ChildlikeMaterialTests(unittest.TestCase):
             (root / "example").mkdir()
             (root / "example" / "input.png").write_bytes(output.getvalue())
             with patch.object(app, "JOBS_DIR", root), patch.object(app, "_azure_post_with_retry", return_value=response) as call:
-                for material in ("childlike_sketch", "gold"):
+                for material in ("childlike_sketch", "continuous_ribbon", "gold"):
                     result = app._do_generation({"id": "example", "params": {
                         "material_id": material, "icon_label": "calendar", "quality": "medium",
                         "ratio": "1:1", "width": 32, "height": 32,
                     }})
                     files = call.call_args.args[3]
                     image = Image.open(io.BytesIO(result))
-                    if material == "childlike_sketch":
+                    if material in ("childlike_sketch", "continuous_ribbon"):
                         self.assertEqual([field for field, _ in files], ["image[]", "image[]"])
                         self.assertEqual(files[0][1][0], "icon.png")
                         self.assertEqual(files[1][1][0], "style-reference.png")
-                        self.assertEqual(image.getpixel((16, 16))[:3], (0, 0, 0))
+                        if material == "childlike_sketch":
+                            self.assertEqual(image.getpixel((16, 16))[:3], (0, 0, 0))
+                        else:
+                            self.assertEqual(image.getpixel((16, 16)), (200, 100, 50, 128))
+                            self.assertNotIn("LITERAL STENCIL", call.call_args.args[2]["prompt"])
                     else:
                         self.assertEqual([field for field, _ in files], ["image"])
                         self.assertEqual(image.getpixel((16, 16)), (200, 100, 50, 128))

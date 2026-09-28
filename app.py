@@ -42,7 +42,7 @@ from dotenv import load_dotenv
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from PIL import Image, ImageChops, ImageFilter, ImageOps
+from PIL import Image, ImageChops, ImageFilter, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -57,6 +57,8 @@ AZURE_DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "")
 AZURE_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
 AZURE_API_KEY = os.environ.get("AZURE_OPENAI_API_KEY", "")
 MAX_CONCURRENCY = int(os.environ.get("MAX_CONCURRENCY", "5"))
+MAX_UPLOAD_BYTES = 40 * 1024 * 1024
+MAX_INPUT_SIDE = 1536
 
 # ---- Auth config
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
@@ -680,6 +682,31 @@ def get_icon_svg(prefix: str, name: str):
 
 
 # ---------------- Job endpoints ----------------
+def _normalize_uploaded_image(raw: bytes) -> bytes:
+    """Bound model inputs while retaining aspect ratio, orientation and alpha."""
+    if not raw:
+        raise HTTPException(status_code=400, detail="Le fichier image est vide.")
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="L’image dépasse la limite de 40 Mo.")
+    try:
+        with Image.open(io.BytesIO(raw)) as source:
+            if source.width * source.height > 64_000_000:
+                raise HTTPException(status_code=413, detail="L’image dépasse 64 mégapixels. Réduis ses dimensions avant l’import.")
+            source.draft("RGB", (MAX_INPUT_SIDE, MAX_INPUT_SIDE))
+            image = ImageOps.exif_transpose(source).convert("RGBA")
+            image.thumbnail((MAX_INPUT_SIDE, MAX_INPUT_SIDE), Image.Resampling.LANCZOS)
+            out = io.BytesIO()
+            image.save(out, format="PNG", optimize=True)
+            return out.getvalue()
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
+        raise HTTPException(status_code=400, detail="Image illisible ou format non pris en charge.") from exc
+
+
+async def _read_uploaded_image(upload: UploadFile) -> bytes:
+    raw = await upload.read(MAX_UPLOAD_BYTES + 1)
+    return await asyncio.to_thread(_normalize_uploaded_image, raw)
+
+
 @app.post("/api/jobs")
 async def create_job(
     image: UploadFile = File(...),
@@ -691,6 +718,7 @@ async def create_job(
     icon_id: str = Form(""),
     icon_label: str = Form(""),
     icon_svg_url: str = Form(""),
+    source_image: UploadFile | None = File(None),
 ):
     # ---- validation
     if material_id not in MATERIALS:
@@ -702,13 +730,14 @@ async def create_job(
     if not (64 <= width <= 4096 and 64 <= height <= 4096):
         raise HTTPException(status_code=400, detail="size out of range (64..4096)")
 
-    img_bytes = await image.read()
-    if not img_bytes:
-        raise HTTPException(status_code=400, detail="Empty image upload")
-    if len(img_bytes) > 8 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Image too large (>8 MB)")
+    img_bytes = await _read_uploaded_image(image)
+    source_bytes = await _read_uploaded_image(source_image) if source_image else None
 
     job_id = uuid.uuid4().hex[:12]
+    if source_bytes is not None:
+        icon_svg_url = f"/api/jobs/{job_id}/source.png"
+    elif icon_id.startswith("custom:") and not icon_svg_url:
+        icon_svg_url = f"/api/jobs/{job_id}/input.png"
     JOBS[job_id] = {
         "id": job_id,
         "status": "queued",
@@ -729,6 +758,8 @@ async def create_job(
     # Write input PNG + meta to disk so the job survives a restart.
     _job_dir(job_id).mkdir(parents=True, exist_ok=True)
     (_job_dir(job_id) / "input.png").write_bytes(img_bytes)
+    if source_bytes is not None:
+        (_job_dir(job_id) / "source.png").write_bytes(source_bytes)
     _save_meta(JOBS[job_id])
     await job_queue.put(job_id)
     return {
@@ -839,6 +870,18 @@ def set_job_background(job_id: str, update: JobBackgroundUpdate):
     _save_meta(updated)
     job["export_background"] = color
     return {"background": color}
+
+
+@app.get("/api/jobs/{job_id}/source.png")
+def get_job_source(job_id: str):
+    """Optimized upload without generation padding, shared by previews and re-runs."""
+    if job_id not in JOBS:
+        raise HTTPException(status_code=404, detail="Job not found")
+    path = _job_dir(job_id) / "source.png"
+    if not path.exists():
+        raise HTTPException(status_code=410, detail="Image source indisponible.")
+    return Response(content=path.read_bytes(), media_type="image/png",
+                    headers={"Cache-Control": "private, max-age=86400"})
 
 
 @app.get("/api/jobs/{job_id}/input.png")

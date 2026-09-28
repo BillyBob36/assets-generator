@@ -17,6 +17,15 @@ MATERIALS: dict[str, dict] = {
         "render_mode": "black_ink",
         "style_reference": "static/material-references/childlike_sketch.png",
     },
+    "continuous_ribbon": {
+        "id": "continuous_ribbon",
+        "label": "Ruban continu",
+        "emoji": "🎀",
+        "swatch": "linear-gradient(135deg,#ff236c 0%,#ff236c 45%,#ff8a24 100%)",
+        "description": "Un seul grand ruban plié en continu, avec des boucles et une extrémité libre",
+        "render_mode": "continuous_ribbon",
+        "style_reference": "static/material-references/continuous_ribbon.png",
+    },
     "gold": {
         "id": "gold",
         "label": "Or massif",
@@ -220,6 +229,53 @@ def build_prompt(material_id: str, icon_label: str = "") -> str:
             "INSIDE the outlined shapes must be alpha 0 except the actual black ink marks. Remove all "
             "white from IMAGE 1. Do not fill hollow shapes with white. Do not depict a checkerboard. "
             "Preserve the irregular ink edges and anti-aliasing."
+        )
+
+    if m.get("render_mode") == "continuous_ribbon":
+        return (
+            "Create a recognizable pictogram made by bending ONE SINGLE LONG CONTINUOUS RIBBON.\n"
+            f"IMAGE 1 is the CONTENT reference{label_hint}: preserve the recognizable subject, "
+            "overall silhouette, orientation and essential components. Reinterpret its geometry freely "
+            "to make a graceful physically continuous ribbon construction. Do NOT trace or extrude "
+            "the source's individual black regions.\n"
+            "FIRST SIMPLIFY: reduce the reference to the few largest gestures needed to recognize it. "
+            "Omit tiny isolated dots, date cells, grids, ticks and decorative details completely. "
+            "A recognizable simplified one-line interpretation is required, not a detailed copy. "
+            "An enclosed shape stays OPEN inside; do not create a solid panel and cut holes into it.\n"
+            "IMAGE 2 is ONLY the STYLE reference: borrow its broad two-sided band, colors, soft folds "
+            "and gentle depth. Never borrow its subject or subject-specific components. The construction "
+            "rules below take priority over any disconnected pieces visible in a reference.\n"
+            "CONSTRUCTION: imagine drawing the entire subject without lifting a pencil, then replacing "
+            "that one continuous line with a WIDE FLAT RIBBON. Use exactly ONE unbranched strip of "
+            "material from one end to the other, never several pieces. Its width stays substantial and "
+            "mostly constant. It bends, curls, folds back on itself and passes above or below itself. "
+            "Every component belongs to that same connected strip. At intersections show credible "
+            "over-under overlaps, with visible continuation on both sides of each overlap. "
+            "No glued junctions, branching paths, disconnected fins, floating accents or loose fragments.\n"
+            "NEGATIVE SPACES: open holes arise naturally BETWEEN ribbon loops. They are not punched "
+            "out of the ribbon. Do NOT cut, mask or end the band at boundaries of white areas in "
+            "IMAGE 1. Connect separated source elements by a flowing return curve or an over-under "
+            "bridge. You may cross some previously empty space, simplify minor details, enlarge loops "
+            "and shift proportions to keep the whole subject flowing and recognizable. Continuity "
+            "takes priority over pixel-perfect fidelity. The band has no internal holes or slots.\n"
+            "FREE END: leave ONE conspicuous loose ribbon tail extending beyond the main pictogram "
+            "by approximately 15 percent of its size, with a soft open curl and a plainly visible "
+            "straight cut end. This tail must visibly grow from the same ribbon, not float separately. "
+            "Place the other end discreetly near a fold. Exactly two physical ends in total. "
+            "Do not turn the whole object into a gift bow.\n"
+            "VISUAL STYLE: a broad soft matte ribbon, vivid warm fuchsia front and saturated mandarin "
+            "orange reverse. Several generous folds and half-twists reveal both sides. Strong flowing "
+            "gesture, expressive curves, elegant shallow spatial depth, soft self-shading at folds. "
+            "A flat band with two distinct faces, not a rope, round tube, extruded outline or flat "
+            "sticker. No metallic shine, fabric weave, paper grain or sharp origami creases.\n"
+            "The ribbon is a NON-EMISSIVE, OPAQUE solid material: absolutely no luminous bloom, "
+            "colored haze, reflected light in the surrounding void or translucent backing surface.\n"
+            "COMPOSITION: straight-on view, centered on a square canvas, complete pictogram AND free "
+            "tail inside the image with at least 12 percent empty margin. No cropping.\n"
+            "OUTPUT: true transparent RGBA PNG. All surrounding space and gaps BETWEEN loops must "
+            "have alpha zero. Remove the input backgrounds. No floor, cast shadow, external glow, "
+            "white fill, background plate, checkerboard, text, watermark or unrelated decoration. "
+            "Keep color and soft self-shading only on the ribbon itself."
         )
 
     input_block = (
